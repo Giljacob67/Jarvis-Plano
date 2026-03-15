@@ -179,16 +179,21 @@ class TestGmailUtils:
 
 
 class TestGmailCommands:
-    def test_inbox_not_connected(self, client, db_session):
+    def test_inbox_not_connected(self, client, db_session, _patch_telegram_send):
         body = _make_telegram_body("/inbox", update_id=2001)
         resp = client.post("/webhooks/telegram", json=body, headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"})
         assert resp.status_code == 200
+        sent_text = _patch_telegram_send.call_args[0][1]
+        assert "/connectgoogle" in sent_text
 
-    def test_inbox_no_gmail_scopes(self, client, db_session):
+    def test_inbox_no_gmail_scopes(self, client, db_session, _patch_telegram_send):
         _make_cred(db_session, scope=NO_GMAIL_SCOPES)
         body = _make_telegram_body("/inbox", update_id=2002)
         resp = client.post("/webhooks/telegram", json=body, headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"})
         assert resp.status_code == 200
+        sent_text = _patch_telegram_send.call_args[0][1]
+        assert "Gmail" in sent_text
+        assert "/connectgoogle" in sent_text
 
     @patch("app.services.google_gmail_service._get_gmail_service")
     def test_inbox_success(self, mock_svc, client, db_session):
@@ -203,10 +208,12 @@ class TestGmailCommands:
         resp = client.post("/webhooks/telegram", json=body, headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"})
         assert resp.status_code == 200
 
-    def test_emailsearch_no_query(self, client, db_session):
+    def test_emailsearch_no_query(self, client, db_session, _patch_telegram_send):
         body = _make_telegram_body("/emailsearch", update_id=2004)
         resp = client.post("/webhooks/telegram", json=body, headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"})
         assert resp.status_code == 200
+        sent_text = _patch_telegram_send.call_args[0][1]
+        assert "/emailsearch" in sent_text
 
     @patch("app.services.google_gmail_service._get_gmail_service")
     def test_emailsearch_success(self, mock_svc, client, db_session):
@@ -245,10 +252,12 @@ class TestGmailCommands:
         resp = client.post("/webhooks/telegram", json=body, headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"})
         assert resp.status_code == 200
 
-    def test_draftemail_missing_parts(self, client, db_session):
+    def test_draftemail_missing_parts(self, client, db_session, _patch_telegram_send):
         body = _make_telegram_body("/draftemail joao@test.com", update_id=2009)
         resp = client.post("/webhooks/telegram", json=body, headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"})
         assert resp.status_code == 200
+        sent_text = _patch_telegram_send.call_args[0][1]
+        assert "/draftemail" in sent_text
 
     @patch("app.services.google_gmail_service._get_gmail_service")
     def test_replydraft_success(self, mock_svc, client, db_session):
@@ -261,10 +270,12 @@ class TestGmailCommands:
         resp = client.post("/webhooks/telegram", json=body, headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"})
         assert resp.status_code == 200
 
-    def test_replydraft_missing_parts(self, client, db_session):
+    def test_replydraft_missing_parts(self, client, db_session, _patch_telegram_send):
         body = _make_telegram_body("/replydraft", update_id=2011)
         resp = client.post("/webhooks/telegram", json=body, headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"})
         assert resp.status_code == 200
+        sent_text = _patch_telegram_send.call_args[0][1]
+        assert "/replydraft" in sent_text
 
     @patch("app.services.google_gmail_service._get_gmail_service")
     def test_senddraft_success(self, mock_svc, client, db_session):
@@ -276,10 +287,12 @@ class TestGmailCommands:
         resp = client.post("/webhooks/telegram", json=body, headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"})
         assert resp.status_code == 200
 
-    def test_senddraft_no_id(self, client, db_session):
+    def test_senddraft_no_id(self, client, db_session, _patch_telegram_send):
         body = _make_telegram_body("/senddraft", update_id=2013)
         resp = client.post("/webhooks/telegram", json=body, headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"})
         assert resp.status_code == 200
+        sent_text = _patch_telegram_send.call_args[0][1]
+        assert "/senddraft" in sent_text
 
     @patch("app.services.google_gmail_service._get_gmail_service")
     def test_inboxsummary_success(self, mock_svc, client, db_session):
@@ -306,21 +319,27 @@ class TestGmailCommands:
 
 
 class TestConnectGoogleReconsent:
-    def test_connectgoogle_shows_reconsent_message_when_no_gmail_scopes(self, client, db_session, monkeypatch):
+    def test_connectgoogle_shows_reconsent_message_when_no_gmail_scopes(self, client, db_session, monkeypatch, _patch_telegram_send):
         monkeypatch.setattr("app.config.settings.app_base_url", "https://test.replit.app")
         monkeypatch.setattr("app.config.settings.google_client_id", "test-id")
         _make_cred(db_session, scope=NO_GMAIL_SCOPES)
         body = _make_telegram_body("/connectgoogle", update_id=3001)
         resp = client.post("/webhooks/telegram", json=body, headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"})
         assert resp.status_code == 200
+        sent_text = _patch_telegram_send.call_args[0][1]
+        assert "Gmail" in sent_text
+        assert "Reconectar" in sent_text
 
-    def test_connectgoogle_normal_when_fully_connected(self, client, db_session, monkeypatch):
+    def test_connectgoogle_normal_when_fully_connected(self, client, db_session, monkeypatch, _patch_telegram_send):
         monkeypatch.setattr("app.config.settings.app_base_url", "https://test.replit.app")
         monkeypatch.setattr("app.config.settings.google_client_id", "test-id")
         _make_cred(db_session, scope=GMAIL_SCOPES)
         body = _make_telegram_body("/connectgoogle", update_id=3002)
         resp = client.post("/webhooks/telegram", json=body, headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"})
         assert resp.status_code == 200
+        sent_text = _patch_telegram_send.call_args[0][1]
+        assert "Clique aqui" in sent_text
+        assert "Reconectar" not in sent_text
 
 
 class TestGmailOAuthStatus:
