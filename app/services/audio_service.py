@@ -70,7 +70,7 @@ async def transcribe_file(file_path: str, language: str = "pt") -> dict[str, Any
         }
 
 
-async def synthesize_speech(text: str, voice: str | None = None, output_format: str = "opus") -> dict[str, Any]:
+async def synthesize_speech(text: str, voice: str | None = None, output_format: str = "ogg") -> dict[str, Any]:
     if not settings.openai_api_key:
         return {"error": "OPENAI_API_KEY não configurada.", "audio_bytes": None}
 
@@ -140,7 +140,7 @@ def set_voice_preference(db: Session, user_id: str, enabled: bool) -> None:
     db.commit()
 
 
-def should_reply_with_voice(db: Session, user_id: str) -> bool:
+def maybe_should_reply_with_voice(db: Session, user_id: str) -> bool:
     if not settings.voice_responses_enabled:
         return False
     return get_voice_preference(db, user_id)

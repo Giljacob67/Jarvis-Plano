@@ -188,7 +188,7 @@ async def _handle_voice_message(
 
         await telegram_service.send_message(chat_id, full_reply)
 
-        if audio_service.should_reply_with_voice(db, user_id):
+        if audio_service.maybe_should_reply_with_voice(db, user_id):
             tts_ok = await _send_voice_reply(db, chat_id, reply_text, user_id)
             if tts_ok:
                 voice_log.tts_generated = True

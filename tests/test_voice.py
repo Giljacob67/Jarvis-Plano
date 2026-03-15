@@ -205,7 +205,7 @@ class TestAssistantIntegration:
 
 class TestVoiceResponse:
     @patch("app.services.audio_service.synthesize_speech", new_callable=AsyncMock)
-    @patch("app.services.audio_service.should_reply_with_voice")
+    @patch("app.services.audio_service.maybe_should_reply_with_voice")
     @patch("app.routes.telegram.handle_free_text", new_callable=AsyncMock)
     @patch("app.services.audio_service.transcribe_file", new_callable=AsyncMock)
     @patch("app.services.telegram_service.download_file", new_callable=AsyncMock)
@@ -229,7 +229,7 @@ class TestVoiceResponse:
         assert voice_log is not None
         assert voice_log.tts_generated is True
 
-    @patch("app.services.audio_service.should_reply_with_voice")
+    @patch("app.services.audio_service.maybe_should_reply_with_voice")
     @patch("app.routes.telegram.handle_free_text", new_callable=AsyncMock)
     @patch("app.services.audio_service.transcribe_file", new_callable=AsyncMock)
     @patch("app.services.telegram_service.download_file", new_callable=AsyncMock)
@@ -243,7 +243,7 @@ class TestVoiceResponse:
         assert resp.status_code == 200
 
     @patch("app.services.audio_service.synthesize_speech", new_callable=AsyncMock)
-    @patch("app.services.audio_service.should_reply_with_voice")
+    @patch("app.services.audio_service.maybe_should_reply_with_voice")
     @patch("app.routes.telegram.handle_free_text", new_callable=AsyncMock)
     @patch("app.services.audio_service.transcribe_file", new_callable=AsyncMock)
     @patch("app.services.telegram_service.download_file", new_callable=AsyncMock)
