@@ -51,6 +51,10 @@ def create_pending_approval(
     idempotency_key: str | None = None,
     expires_in_hours: int = 48,
 ) -> PendingApproval | None:
+    if not settings.approvals_enabled:
+        logger.info("Approvals disabled, skipping creation for user=%s", user_id)
+        return None
+
     if action_type not in VALID_ACTION_TYPES:
         logger.warning("Invalid action_type=%s for user=%s", action_type, user_id)
         return None
