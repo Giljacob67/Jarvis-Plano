@@ -1,0 +1,210 @@
+Fase 3 — Google OAuth real + Calendar + Tasks
+
+Evolua o projeto existente sem recriar o scaffold e sem quebrar as Fases 1 e 2.
+Não adicione Node, frontend, package.json, Docker ou filas externas.
+Preserve FastAPI, SQLite/SQLAlchemy, Telegram funcional, memória local e OpenAI.
+
+Objetivo
+Adicionar autenticação real com Google para 1 usuário e integrar:
+- Google Calendar
+- Google Tasks
+
+Nesta fase, NÃO implementar Gmail ainda.
+
+Por quê
+Quero primeiro habilitar produtividade pessoal real com agenda e tarefas:
+- ver agenda do dia
+- criar eventos
+- listar tarefas
+- criar tarefas
+- atualizar o comando /myday para usar dados reais do Google quando a conta estiver conectada
+
+Escopo desta fase
+- OAuth 2.0 server-side real com Google
+- armazenamento seguro de tokens no banco
+- refresh token persistido
+- integração real com Google Calendar API
+- integração real com Google Tasks API
+- /me/day e /myday passam a usar Google real quando conectado
+- fallback para mocks quando o Google não estiver conectado
+- sem Gmail nesta fase
+
+Restrições
+- usar fluxo OAuth de web server app
+- usar escopos mínimos necessários
+- não pedir escopos do Gmail nesta fase
+- manter tudo em pt-BR nas respostas ao usuário
+- manter Telegram como interface principal
+- não quebrar testes existentes
+
+1) Dependências
+Adicionar dependências Python apropriadas para OAuth e Google APIs.
+Prefira bibliotecas oficiais do Google para OAuth/token handling e acesso às APIs.
+Exemplos aceitáveis:
+- google-auth
+- google-auth-oauthlib
+- google-api-python-client
+- google-auth-httplib2
+Se houver opção mais simples e estável, use-a.
+
+2) Configuração
+Atualizar `.env.example` com:
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=
+GOOGLE_OAUTH_SCOPES=
+GOOGLE_ENCRYPTION_KEY=
+
+Definir escopos mínimos desta fase, algo equivalente a:
+- acesso necessário para ler/criar eventos do Calendar
+- acesso necessário para ler/criar tarefas do Tasks
+
+Não incluir Gmail scopes.
+
+3) Modelos / banco
+Criar tabela para armazenar credenciais Google do usuário, por exemplo:
+GoogleCredential
+- id
+- user_id (String, mesmo padrão do projeto)
+- provider = "google"
+- access_token (nullable)
+- refresh_token (nullable)
+- token_expiry (nullable)
+- scope
+- token_type
+- raw_json nullable
+- created_at
+- updated_at
+
+Se achar melhor, pode armazenar por usuário em tabela separada ou ampliar User, mas:
+- refresh_token deve ser persistido
+- dados sensíveis devem ser armazenados com cuidado
+- deixar claro no código onde futuramente entrará criptografia forte/secrets manager
+
+4) Rotas OAuth
+Implementar rotas reais:
+- GET /auth/google/start
+- GET /auth/google/callback
+- GET /auth/google/status
+- POST /auth/google/disconnect
+
+Comportamento:
+- /auth/google/start gera URL OAuth e redireciona o usuário
+- usar state para segurança
+- /auth/google/callback troca authorization code por tokens
+- persistir refresh token
+- associar a conta Google ao usuário único do projeto
+- /auth/google/status informa se Google está conectado, escopos e validade básica
+- /auth/google/disconnect remove tokens locais
+
+5) Serviços Google
+Criar/atualizar serviços:
+- app/services/google_oauth_service.py
+- app/services/google_calendar_service.py
+- app/services/google_tasks_service.py
+
+GoogleOAuthService:
+- gerar auth URL
+- trocar code por tokens
+- refrescar token expirado
+- carregar credenciais do usuário
+- retornar cliente autenticado para APIs
+
+GoogleCalendarService:
+- list_today_events(user_id, timezone)
+- list_upcoming_events(user_id, days=7, limit=20)
+- create_event(user_id, title, start_time, end_time, timezone, description=None, location=None)
+- optionally create_focus_block(...)
+- converter corretamente timezone para America/Sao_Paulo por padrão
+
+GoogleTasksService:
+- list_task_lists(user_id)
+- list_tasks(user_id, tasklist_id=None, show_completed=False, limit=20)
+- create_task(user_id, title, notes=None, due=None, tasklist_id=None)
+- complete_task(user_id, task_id, tasklist_id)
+- escolher uma task list padrão quando apropriado
+
+6) /me/day e comandos Telegram
+Atualizar `/me/day` e o comando `/myday`:
+- se Google estiver conectado:
+  - listar eventos reais de hoje
+  - listar tarefas reais pendentes
+  - retornar resumo consolidado
+- se não estiver conectado:
+  - manter fallback amigável usando mocks atuais
+
+Adicionar novos comandos no Telegram:
+- /connectgoogle -> envia link para conectar Google
+- /google -> mostra status da conexão
+- /tasks -> lista tarefas pendentes
+- /newevent <titulo> | <inicio> | <fim>
+- /newtask <titulo>
+
+Se o parsing de datas for complexo, começar simples e documentar o formato esperado:
+- ex.: 2026-03-16 09:00
+
+7) OpenAI / tools
+Expandir OpenAIService com novas tools internas:
+- get_my_day()
+- list_tasks(limit)
+- create_task(title, notes, due)
+- list_upcoming_events(days, limit)
+- create_event(title, start_time, end_time, timezone, description, location)
+- get_google_connection_status()
+
+Regras:
+- se Google não estiver conectado, responder em pt-BR com instrução curta para conectar
+- para create_event e create_task nesta fase, pode executar diretamente
+- para qualquer ação destrutiva/edição futura, continuar exigindo fase posterior com aprovação
+- registrar chamadas relevantes em ActionLog
+
+8) Timezone e datas
+Padronizar timezone default como America/Sao_Paulo.
+Garantir parsing consistente de:
+- hoje
+- amanhã
+- esta semana
+- datas ISO simples
+Se preferir, criar helper central para datas.
+
+9) Testes
+Adicionar testes para:
+- /auth/google/start retorna redirect/url válida
+- /auth/google/status desconectado
+- callback OAuth com serviços mockados
+- /me/day com Google desconectado -> fallback mock
+- /me/day com Google conectado -> usa Calendar + Tasks
+- /myday no Telegram usando Google real mockado
+- /connectgoogle
+- /tasks
+- /newtask
+- /newevent
+Todos sem chamadas reais externas; usar monkeypatch/mocks.
+
+10) README
+Atualizar README com:
+- como criar credenciais OAuth no Google Cloud
+- quais redirect URIs configurar
+- quais Secrets adicionar no Replit
+- como conectar a conta Google
+- como testar /connectgoogle, /google, /tasks, /newtask, /newevent
+- observação clara de que Gmail ainda não faz parte desta fase
+
+11) Critério de pronto
+Considere concluído quando:
+- eu consigo conectar minha conta Google via OAuth real
+- o app persiste tokens e refresh token
+- /myday mostra agenda e tarefas reais quando conectado
+- /tasks lista tarefas reais
+- /newtask cria tarefa real
+- /newevent cria evento real
+- tudo continua funcionando no Telegram
+- testes passam
+
+No final:
+1. rode a app
+2. rode os testes
+3. me mostre a árvore de arquivos alterados/criados
+4. liste os novos Secrets
+5. mostre exatamente quais redirect URIs devo cadastrar no Google Cloud
+6. mostre um checklist curto para eu validar a conexão Google
