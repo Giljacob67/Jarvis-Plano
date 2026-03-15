@@ -11,7 +11,7 @@ def test_day_overview_returns_mocked_data(client: TestClient) -> None:
     assert isinstance(data["emails"], list)
     assert len(data["calendar"]) > 0
     assert len(data["tasks"]) > 0
-    assert len(data["emails"]) > 0
+    assert len(data["emails"]) == 0
 
 
 def test_day_overview_calendar_event_structure(client: TestClient) -> None:
@@ -27,11 +27,3 @@ def test_day_overview_task_structure(client: TestClient) -> None:
     task = response.json()["tasks"][0]
     assert "title" in task
     assert "status" in task
-
-
-def test_day_overview_email_structure(client: TestClient) -> None:
-    response = client.get("/me/day")
-    email = response.json()["emails"][0]
-    assert "subject" in email
-    assert "sender" in email
-    assert "priority" in email

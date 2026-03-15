@@ -38,11 +38,7 @@ def get_mock_day_overview() -> DayOverview:
             Task(title="Write API docs", due=today, status="in_progress"),
             Task(title="Deploy staging", due=today, status="done"),
         ],
-        emails=[
-            Email(subject="Quarterly report ready", sender="cfo@company.com", snippet="The Q1 report is attached...", priority="high"),
-            Email(subject="Team offsite planning", sender="hr@company.com", snippet="Please vote on the dates...", priority="normal"),
-            Email(subject="Invoice #1234", sender="billing@vendor.com", snippet="Your invoice is due on...", priority="low"),
-        ],
+        emails=[],
     )
 
 
@@ -239,10 +235,28 @@ async def tool_executor(tool_name: str, tool_args: dict[str, Any], db: Session |
         if not db:
             return {"error": "Banco não disponível"}
         draft_id = tool_args.get("draft_id", "")
+        to = tool_args.get("to", "")
+        subject = tool_args.get("subject", "")
+        body = tool_args.get("body", "")
+        if to and subject and body:
+            result = await google_gmail_service.create_draft(db, user_id, to=to, subject=subject, body=body)
+            if "error" in result:
+                return result
+            created_id = result.get("draft_id", "")
+            return {
+                "status": "draft_created",
+                "draft_id": created_id,
+                "message": f"Rascunho criado (ID: {created_id}). Use /senddraft {created_id} para enviar. O envio direto por texto livre não é permitido por segurança.",
+            }
+        if draft_id:
+            return {
+                "status": "draft_only",
+                "draft_id": draft_id,
+                "message": f"Para enviar este rascunho, use o comando /senddraft {draft_id}. O envio direto por texto livre não é permitido por segurança.",
+            }
         return {
             "status": "draft_only",
-            "draft_id": draft_id,
-            "message": f"Para enviar este rascunho, use o comando /senddraft {draft_id}. O envio direto por texto livre não é permitido por segurança.",
+            "message": "Para enviar e-mails, primeiro crie um rascunho com /draftemail e depois use /senddraft <id> para enviar.",
         }
 
     return {"error": f"Tool '{tool_name}' não reconhecida"}

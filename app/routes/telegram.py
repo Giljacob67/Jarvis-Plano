@@ -174,7 +174,16 @@ async def telegram_webhook(
             reply_text = "⚠️ Credenciais Google OAuth não configuradas. Peça ao administrador."
         else:
             auth_link = f"{settings.app_base_url.rstrip('/')}/auth/google/start"
-            reply_text = f"🔗 [Clique aqui para conectar sua conta Google]({auth_link})"
+            status = google_oauth_service.get_status(db, user_id)
+            if status.get("connected") and not status.get("gmail_enabled"):
+                reply_text = (
+                    "⚠️ Sua conta Google está conectada, mas sem permissões de Gmail.\n"
+                    "Ao clicar no link abaixo, você será redirecionado para autorizar os escopos adicionais de Gmail.\n"
+                    "Seus acessos anteriores (Calendar, Tasks) serão mantidos.\n\n"
+                    f"🔗 [Reconectar com Gmail]({auth_link})"
+                )
+            else:
+                reply_text = f"🔗 [Clique aqui para conectar sua conta Google]({auth_link})"
     elif text.startswith("/google"):
         status = google_oauth_service.get_status(db, user_id)
         if status.get("connected"):

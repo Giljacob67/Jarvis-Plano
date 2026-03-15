@@ -219,13 +219,16 @@ TOOLS = [
     {
         "type": "function",
         "name": "send_email_draft",
-        "description": "Envia um rascunho de e-mail. ATENÇÃO: por segurança, quando chamado via texto livre, NÃO envia — apenas retorna instrução para usar /senddraft",
+        "description": "Envia um e-mail. Por segurança, quando chamado via texto livre, NÃO envia diretamente — cria um rascunho e retorna instrução para usar /senddraft. Pode receber draft_id existente ou dados de composição (to, subject, body) para criar rascunho automaticamente.",
         "parameters": {
             "type": "object",
             "properties": {
-                "draft_id": {"type": "string", "description": "ID do rascunho a enviar"},
+                "draft_id": {"type": "string", "description": "ID de um rascunho existente a enviar"},
+                "to": {"type": "string", "description": "Endereço do destinatário (para criar rascunho)"},
+                "subject": {"type": "string", "description": "Assunto (para criar rascunho)"},
+                "body": {"type": "string", "description": "Corpo do e-mail (para criar rascunho)"},
             },
-            "required": ["draft_id"],
+            "required": [],
         },
     },
 ]

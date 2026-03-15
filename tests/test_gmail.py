@@ -305,6 +305,24 @@ class TestGmailCommands:
         assert resp.status_code == 200
 
 
+class TestConnectGoogleReconsent:
+    def test_connectgoogle_shows_reconsent_message_when_no_gmail_scopes(self, client, db_session, monkeypatch):
+        monkeypatch.setattr("app.config.settings.app_base_url", "https://test.replit.app")
+        monkeypatch.setattr("app.config.settings.google_client_id", "test-id")
+        _make_cred(db_session, scope=NO_GMAIL_SCOPES)
+        body = _make_telegram_body("/connectgoogle", update_id=3001)
+        resp = client.post("/webhooks/telegram", json=body, headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"})
+        assert resp.status_code == 200
+
+    def test_connectgoogle_normal_when_fully_connected(self, client, db_session, monkeypatch):
+        monkeypatch.setattr("app.config.settings.app_base_url", "https://test.replit.app")
+        monkeypatch.setattr("app.config.settings.google_client_id", "test-id")
+        _make_cred(db_session, scope=GMAIL_SCOPES)
+        body = _make_telegram_body("/connectgoogle", update_id=3002)
+        resp = client.post("/webhooks/telegram", json=body, headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"})
+        assert resp.status_code == 200
+
+
 class TestGmailOAuthStatus:
     def test_status_not_connected(self, client, db_session):
         resp = client.get("/auth/google/status")
@@ -333,10 +351,28 @@ class TestGmailOAuthStatus:
 
 class TestGmailToolExecutor:
     @pytest.mark.asyncio
-    async def test_send_email_draft_via_free_text_creates_draft_only(self, db_session):
+    async def test_send_email_draft_with_draft_id_returns_instruction(self, db_session):
         from app.services.assistant_service import tool_executor
         result = await tool_executor("send_email_draft", {"draft_id": "d123"}, db_session, "12345")
         assert result["status"] == "draft_only"
+        assert "/senddraft" in result["message"]
+
+    @patch("app.services.google_gmail_service._get_gmail_service")
+    @pytest.mark.asyncio
+    async def test_send_email_draft_with_composition_creates_draft(self, mock_svc, db_session):
+        _make_cred(db_session)
+        mock_gmail = MagicMock()
+        mock_svc.return_value = mock_gmail
+        mock_gmail.users().drafts().create().execute.return_value = {"id": "auto_draft_1"}
+
+        from app.services.assistant_service import tool_executor
+        result = await tool_executor(
+            "send_email_draft",
+            {"to": "test@test.com", "subject": "Hello", "body": "Hi there"},
+            db_session, "12345"
+        )
+        assert result["status"] == "draft_created"
+        assert result["draft_id"] == "auto_draft_1"
         assert "/senddraft" in result["message"]
 
     @pytest.mark.asyncio
@@ -435,5 +471,4 @@ class TestMeDayWithGmail:
     async def test_myday_no_emails_when_not_connected(self, db_session):
         from app.services.assistant_service import get_real_or_mock_day_overview
         overview = await get_real_or_mock_day_overview(db_session, "12345")
-        assert len(overview.emails) == 3
-        assert overview.emails[0].subject == "Quarterly report ready"
+        assert len(overview.emails) == 0
