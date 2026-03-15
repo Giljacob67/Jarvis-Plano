@@ -2,9 +2,43 @@
 
 ## Overview
 
-pnpm workspace monorepo using TypeScript. Each package manages its own dependencies.
+Hybrid workspace: a pnpm monorepo (TypeScript) plus a standalone Python FastAPI project ("Jarvis Pessoal").
 
-## Stack
+## Jarvis Pessoal (Python API)
+
+- **Framework**: FastAPI 0.135+
+- **Python version**: 3.12
+- **Package manager**: pip + requirements.txt
+- **Database**: SQLAlchemy with SQLite (configurable via `JARVIS_DATABASE_URL`)
+- **Workflow**: `Jarvis Pessoal` — runs `uvicorn app.main:app --host 0.0.0.0 --port 8000`
+- **Tests**: `pytest tests/ -v`
+
+### Python project structure
+
+```text
+app/
+├── main.py          # FastAPI app with lifespan, error handler, router
+├── config.py        # Pydantic Settings (reads .env)
+├── db.py            # SQLAlchemy engine, session, Base
+├── models/          # SQLAlchemy models (empty, ready to add)
+├── schemas/         # Pydantic schemas (health, telegram, day, common)
+├── routes/          # FastAPI routers (health, telegram, auth, day)
+├── services/        # Stub services (Telegram, OpenAI, GoogleCalendar, Gmail, GoogleTasks)
+└── utils/           # Utility modules
+tests/               # pytest tests for all endpoints
+requirements.txt     # Python dependencies
+.env.example         # Environment variable template
+```
+
+### Key env vars (Python)
+
+- `JARVIS_DATABASE_URL` — defaults to `sqlite:///./jarvis.db`
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_ALLOWED_USER_ID`
+- `OPENAI_API_KEY`
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
+- `APP_ENV`, `TIMEZONE`, `APP_BASE_URL`
+
+## Node.js / TypeScript Stack
 
 - **Monorepo tool**: pnpm workspaces
 - **Node.js version**: 24
