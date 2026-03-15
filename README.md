@@ -38,6 +38,10 @@ Cadastre os seguintes Secrets no painel do Replit (Tools > Secrets):
 | `TIMEZONE` | Opcional | Fuso horário, padrão `America/Sao_Paulo` |
 | `JARVIS_DATABASE_URL` | Opcional | Padrão `sqlite:///./jarvis.db` |
 
+### Nota sobre o workspace
+
+O Replit pode ter workflows adicionais pré-configurados (ex: api-server, mockup-sandbox) que são gerenciados pela plataforma. Eles não fazem parte do Jarvis Pessoal e podem ser ignorados. O único workflow relevante é "Jarvis Pessoal".
+
 ### Rodando
 
 O workflow está configurado para executar:
