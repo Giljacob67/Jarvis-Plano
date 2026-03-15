@@ -8,7 +8,7 @@ def get_tz(tz_name: str | None = None) -> ZoneInfo:
     return ZoneInfo(tz_name or DEFAULT_TZ)
 
 
-def today_bounds_utc(tz_name: str | None = None) -> tuple[datetime, datetime]:
+def today_bounds(tz_name: str | None = None) -> tuple[datetime, datetime]:
     tz = get_tz(tz_name)
     now_local = datetime.now(tz)
     start_local = datetime.combine(now_local.date(), time.min, tzinfo=tz)
@@ -16,7 +16,7 @@ def today_bounds_utc(tz_name: str | None = None) -> tuple[datetime, datetime]:
     return start_local, end_local
 
 
-def week_bounds_utc(tz_name: str | None = None, days: int = 7) -> tuple[datetime, datetime]:
+def week_bounds(tz_name: str | None = None, days: int = 7) -> tuple[datetime, datetime]:
     tz = get_tz(tz_name)
     now_local = datetime.now(tz)
     start_local = datetime.combine(now_local.date(), time.min, tzinfo=tz)

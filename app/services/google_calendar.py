@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.services.google_oauth_service import get_credentials
-from app.utils.date_utils import today_bounds_utc, week_bounds_utc, get_tz
+from app.utils.date_utils import today_bounds, week_bounds, get_tz
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ async def list_today_events(db: Session, user_id: str, tz: str | None = None) ->
     if service is None:
         return []
 
-    start_dt, end_dt = today_bounds_utc(tz)
+    start_dt, end_dt = today_bounds(tz)
     try:
         events_result = service.events().list(
             calendarId="primary",
@@ -47,7 +47,7 @@ async def list_upcoming_events(
     if service is None:
         return []
 
-    start_dt, end_dt = week_bounds_utc(tz, days=days)
+    start_dt, end_dt = week_bounds(tz, days=days)
     try:
         events_result = service.events().list(
             calendarId="primary",

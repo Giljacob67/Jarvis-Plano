@@ -11,6 +11,7 @@ def test_google_start_no_credentials(client: TestClient) -> None:
         assert response.status_code == 501
         data = response.json()
         assert data["status"] == "not_implemented"
+        assert "não configurado" in data["message"].lower() or "not_implemented" in data["status"]
 
 
 def test_google_start_redirects(client: TestClient) -> None:

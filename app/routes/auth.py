@@ -18,7 +18,7 @@ async def google_auth_start():
     if not settings.google_client_id or not settings.google_client_secret:
         return JSONResponse(
             status_code=501,
-            content={"status": "not_implemented", "message": "Google OAuth not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET."},
+            content={"status": "not_implemented", "message": "Google OAuth não configurado. Defina GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET."},
         )
 
     user_id = settings.telegram_allowed_user_id or "default"
