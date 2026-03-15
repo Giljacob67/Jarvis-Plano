@@ -22,11 +22,52 @@ from app.services.memory_service import save_memory, list_memories
 from app.services import google_oauth_service
 from app.services import google_calendar as google_calendar_service
 from app.services import google_tasks as google_tasks_service
+from app.services import google_gmail_service
 from app.utils.date_utils import parse_datetime_local
+from app.utils.gmail_utils import format_messages_list_telegram
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+HELP_TEXT = (
+    "Comandos disponíveis:\n"
+    "/myday — resumo do dia\n"
+    "/remember <texto> — salvar uma anotação\n"
+    "/memories — listar anotações recentes\n"
+    "/connectgoogle — conectar conta Google\n"
+    "/google — status da conexão Google\n"
+    "/tasks — listar tarefas\n"
+    "/newtask <titulo> — criar tarefa\n"
+    "/newevent <titulo> | <inicio> | <fim> — criar evento\n"
+    "/inbox — e-mails recentes da inbox\n"
+    "/emailsearch <consulta> — buscar e-mails\n"
+    "/thread <thread_id> — ver thread de e-mail\n"
+    "/drafts — listar rascunhos\n"
+    "/draftemail <para> | <assunto> | <corpo> — criar rascunho\n"
+    "/replydraft <message_id> | <corpo> — responder e-mail (rascunho)\n"
+    "/senddraft <draft_id> — enviar rascunho\n"
+    "/inboxsummary — resumo da inbox\n"
+    "/help — ver esta mensagem\n\n"
+    "Ou envie texto livre para conversar comigo!"
+)
+
+START_TEXT = (
+    "Olá! 👋 Sou o Jarvis, seu assistente pessoal de produtividade.\n\n"
+    f"{HELP_TEXT}"
+)
+
+
+def _gmail_not_ready_msg(db: Session, user_id: str) -> str | None:
+    status = google_oauth_service.get_status(db, user_id)
+    if not status.get("connected"):
+        return "❌ Google não conectado. Use /connectgoogle para conectar sua conta primeiro."
+    if not status.get("gmail_enabled"):
+        return (
+            "⚠️ Sua conta Google está conectada, mas sem permissões de Gmail. "
+            "Use /connectgoogle para reconectar com os escopos de Gmail."
+        )
+    return None
 
 
 @router.post("/telegram", response_model=TelegramWebhookResponse)
@@ -104,34 +145,9 @@ async def telegram_webhook(
     reply_text = ""
 
     if text.startswith("/start"):
-        reply_text = (
-            "Olá! 👋 Sou o Jarvis, seu assistente pessoal de produtividade.\n\n"
-            "Comandos disponíveis:\n"
-            "/myday — resumo do dia (agenda, tarefas)\n"
-            "/remember <texto> — salvar uma anotação\n"
-            "/memories — listar anotações recentes\n"
-            "/connectgoogle — conectar conta Google\n"
-            "/google — status da conexão Google\n"
-            "/tasks — listar tarefas do Google Tasks\n"
-            "/newtask <titulo> — criar tarefa\n"
-            "/newevent <titulo> | <inicio> | <fim> — criar evento\n"
-            "/help — ver esta mensagem novamente\n\n"
-            "Ou simplesmente me envie uma mensagem e eu respondo com a ajuda da IA! 🤖"
-        )
+        reply_text = START_TEXT
     elif text.startswith("/help"):
-        reply_text = (
-            "Comandos disponíveis:\n"
-            "/myday — resumo do dia\n"
-            "/remember <texto> — salvar uma anotação\n"
-            "/memories — listar anotações recentes\n"
-            "/connectgoogle — conectar conta Google\n"
-            "/google — status da conexão Google\n"
-            "/tasks — listar tarefas\n"
-            "/newtask <titulo> — criar tarefa\n"
-            "/newevent <titulo> | <inicio> | <fim> — criar evento\n"
-            "/help — ver esta mensagem\n\n"
-            "Ou envie texto livre para conversar comigo!"
-        )
+        reply_text = HELP_TEXT
     elif text.startswith("/myday"):
         overview = await get_real_or_mock_day_overview(db, user_id)
         reply_text = format_day_overview_text(overview)
@@ -162,11 +178,16 @@ async def telegram_webhook(
     elif text.startswith("/google"):
         status = google_oauth_service.get_status(db, user_id)
         if status.get("connected"):
+            gmail_str = "✅" if status.get("gmail_enabled") else "❌"
+            cal_str = "✅" if status.get("calendar_enabled") else "❌"
+            tasks_str = "✅" if status.get("tasks_enabled") else "❌"
             reply_text = (
                 "✅ Conta Google conectada!\n"
-                f"Escopos: {status.get('scope', '')}\n"
+                f"Calendar: {cal_str} | Tasks: {tasks_str} | Gmail: {gmail_str}\n"
                 f"Validade do token: {status.get('token_expiry', 'N/A')}"
             )
+            if not status.get("gmail_enabled"):
+                reply_text += "\n\n⚠️ Gmail não autorizado. Use /connectgoogle para reconectar com escopos de Gmail."
         else:
             reply_text = "❌ Conta Google não conectada. Use /connectgoogle para conectar."
     elif text.startswith("/tasks"):
@@ -227,6 +248,151 @@ async def telegram_webhook(
                         reply_text = f"✅ Evento criado: \"{result.get('title', ev_title)}\""
                         if result.get("link"):
                             reply_text += f"\n🔗 {result['link']}"
+    elif text.startswith("/inboxsummary"):
+        gmail_err = _gmail_not_ready_msg(db, user_id)
+        if gmail_err:
+            reply_text = gmail_err
+        else:
+            result = await google_gmail_service.summarize_inbox(db, user_id)
+            if "error" in result:
+                reply_text = f"❌ {result['error']}"
+            else:
+                reply_text = result.get("summary", "Não foi possível gerar o resumo.")
+    elif text.startswith("/inbox"):
+        gmail_err = _gmail_not_ready_msg(db, user_id)
+        if gmail_err:
+            reply_text = gmail_err
+        else:
+            result = await google_gmail_service.list_messages(db, user_id)
+            if "error" in result:
+                reply_text = f"❌ {result['error']}"
+            else:
+                reply_text = format_messages_list_telegram(result.get("messages", []))
+    elif text.startswith("/emailsearch"):
+        query = text[len("/emailsearch"):].strip()
+        if not query:
+            reply_text = (
+                "Use: /emailsearch <consulta>\n"
+                "Exemplos:\n"
+                "  /emailsearch from:joao@email.com\n"
+                "  /emailsearch is:unread subject:relatório\n"
+                "  /emailsearch newer_than:3d"
+            )
+        else:
+            gmail_err = _gmail_not_ready_msg(db, user_id)
+            if gmail_err:
+                reply_text = gmail_err
+            else:
+                result = await google_gmail_service.search_emails(db, user_id, query=query)
+                if "error" in result:
+                    reply_text = f"❌ {result['error']}"
+                else:
+                    reply_text = format_messages_list_telegram(result.get("messages", []))
+    elif text.startswith("/thread"):
+        thread_id = text[len("/thread"):].strip()
+        if not thread_id:
+            reply_text = "Use: /thread <thread_id>"
+        else:
+            gmail_err = _gmail_not_ready_msg(db, user_id)
+            if gmail_err:
+                reply_text = gmail_err
+            else:
+                result = await google_gmail_service.get_thread(db, user_id, thread_id=thread_id)
+                if "error" in result:
+                    reply_text = f"❌ {result['error']}"
+                else:
+                    msgs = result.get("messages", [])
+                    if not msgs:
+                        reply_text = "Nenhuma mensagem nesta thread."
+                    else:
+                        lines = [f"📧 Thread ({len(msgs)} mensagens):"]
+                        for i, m in enumerate(msgs, 1):
+                            sender = m.get("from", "?")
+                            if "<" in sender:
+                                sender = sender.split("<")[0].strip().strip('"')
+                            subject = m.get("subject", "(sem assunto)")
+                            body_preview = m.get("body", "")[:200]
+                            lines.append(f"\n--- Mensagem {i} ---")
+                            lines.append(f"De: {sender}")
+                            lines.append(f"Assunto: {subject}")
+                            if body_preview:
+                                lines.append(f"{body_preview}")
+                        reply_text = "\n".join(lines)
+    elif text.startswith("/draftemail"):
+        parts_raw = text[len("/draftemail"):].strip()
+        parts = [p.strip() for p in parts_raw.split("|")]
+        if len(parts) < 3:
+            reply_text = (
+                "Use: /draftemail destinatário | assunto | corpo\n"
+                "Exemplo: /draftemail joao@email.com | Reunião amanhã | Olá João, podemos..."
+            )
+        else:
+            gmail_err = _gmail_not_ready_msg(db, user_id)
+            if gmail_err:
+                reply_text = gmail_err
+            else:
+                to_addr = parts[0]
+                subject = parts[1]
+                body = parts[2]
+                result = await google_gmail_service.create_draft(db, user_id, to=to_addr, subject=subject, body=body)
+                if "error" in result:
+                    reply_text = f"❌ {result['error']}"
+                else:
+                    reply_text = result.get("message", "Rascunho criado.")
+    elif text.startswith("/replydraft"):
+        parts_raw = text[len("/replydraft"):].strip()
+        parts = [p.strip() for p in parts_raw.split("|", 1)]
+        if len(parts) < 2 or not parts[0] or not parts[1]:
+            reply_text = (
+                "Use: /replydraft <message_id> | <corpo da resposta>\n"
+                "Exemplo: /replydraft 18abc123def | Obrigado, confirmo presença!"
+            )
+        else:
+            gmail_err = _gmail_not_ready_msg(db, user_id)
+            if gmail_err:
+                reply_text = gmail_err
+            else:
+                msg_id = parts[0]
+                body = parts[1]
+                result = await google_gmail_service.create_reply_draft(db, user_id, message_id=msg_id, body=body)
+                if "error" in result:
+                    reply_text = f"❌ {result['error']}"
+                else:
+                    reply_text = result.get("message", "Rascunho de resposta criado.")
+    elif text.startswith("/senddraft"):
+        draft_id = text[len("/senddraft"):].strip()
+        if not draft_id:
+            reply_text = "Use: /senddraft <draft_id>"
+        else:
+            gmail_err = _gmail_not_ready_msg(db, user_id)
+            if gmail_err:
+                reply_text = gmail_err
+            else:
+                result = await google_gmail_service.send_draft(db, user_id, draft_id=draft_id)
+                if "error" in result:
+                    reply_text = f"❌ {result['error']}"
+                else:
+                    reply_text = result.get("message", "E-mail enviado!")
+    elif text.startswith("/drafts"):
+        gmail_err = _gmail_not_ready_msg(db, user_id)
+        if gmail_err:
+            reply_text = gmail_err
+        else:
+            result = await google_gmail_service.list_drafts(db, user_id)
+            if "error" in result:
+                reply_text = f"❌ {result['error']}"
+            else:
+                drafts = result.get("drafts", [])
+                if not drafts:
+                    reply_text = "📝 Nenhum rascunho encontrado."
+                else:
+                    lines = ["📝 Seus rascunhos:"]
+                    for i, d in enumerate(drafts, 1):
+                        to_str = d.get("to", "?")
+                        subj = d.get("subject", "(sem assunto)")
+                        did = d.get("draft_id", "")
+                        lines.append(f"{i}. Para: {to_str} — {subj}\n   ID: {did}")
+                    reply_text = "\n".join(lines)
     else:
         reply_text = await handle_free_text(db, user_id, text, raw_update=body)
 

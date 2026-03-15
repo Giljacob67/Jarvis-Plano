@@ -23,6 +23,18 @@ class Settings(BaseSettings):
     google_oauth_scopes: str = "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/tasks"
     google_encryption_key: str = ""
 
+    google_gmail_enabled: bool = True
+    google_gmail_scopes: str = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose"
+    gmail_inbox_query_default: str = "in:inbox newer_than:7d"
+    gmail_max_list_results: int = 10
+
+    @property
+    def all_google_scopes(self) -> str:
+        scopes = self.google_oauth_scopes
+        if self.google_gmail_enabled:
+            scopes = f"{scopes} {self.google_gmail_scopes}"
+        return scopes
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

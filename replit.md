@@ -12,9 +12,9 @@ Hybrid workspace: a pnpm monorepo (TypeScript) plus a standalone Python FastAPI 
 - **Database**: SQLAlchemy with SQLite (configurable via `JARVIS_DATABASE_URL`)
 - **AI**: OpenAI Responses API with function calling (model default: `gpt-5-mini`)
 - **Bot**: Telegram Bot API via webhooks
-- **Google**: OAuth 2.0 + Calendar API + Tasks API (real data when connected, mock fallback)
+- **Google**: OAuth 2.0 + Calendar API + Tasks API + Gmail API (real data when connected, mock fallback)
 - **Workflow**: `Jarvis Pessoal` — runs `uvicorn app.main:app --host 0.0.0.0 --port 8000`
-- **Tests**: `pytest tests/ -v` (48 tests)
+- **Tests**: `pytest tests/ -v` (87 tests)
 
 ### Python project structure
 
@@ -35,21 +35,23 @@ app/
 ├── schemas/             # Pydantic schemas (health, telegram, day, common)
 ├── routes/
 │   ├── health.py        # GET /health
-│   ├── telegram.py      # POST /webhooks/telegram (commands: /start, /help, /myday, /remember, /memories, /connectgoogle, /google, /tasks, /newtask, /newevent)
+│   ├── telegram.py      # POST /webhooks/telegram (commands: /start, /help, /myday, /remember, /memories, /connectgoogle, /google, /tasks, /newtask, /newevent, /inbox, /emailsearch, /thread, /drafts, /draftemail, /replydraft, /senddraft, /inboxsummary)
 │   ├── auth.py          # Google OAuth routes (/start, /callback, /status, /disconnect)
 │   └── day.py           # GET /me/day (real data or mock fallback)
 ├── services/
 │   ├── telegram.py      # TelegramService (reused httpx.AsyncClient)
-│   ├── openai_service.py  # OpenAIService (Responses API, function calling, 8 tools)
-│   ├── assistant_service.py  # Orchestrates context, history, memories, tool execution, Google fallback
+│   ├── openai_service.py  # OpenAIService (Responses API, function calling, 16 tools)
+│   ├── assistant_service.py  # Orchestrates context, history, memories, tool execution, Google/Gmail fallback
 │   ├── memory_service.py    # save_memory, list_memories, search_memories
-│   ├── google_oauth_service.py  # OAuth flow (auth URL, code exchange, token refresh, revoke)
+│   ├── google_oauth_service.py  # OAuth flow (auth URL, code exchange, token refresh, revoke, has_gmail_scopes)
 │   ├── google_calendar.py   # Google Calendar API (list events, create events)
 │   ├── google_tasks.py      # Google Tasks API (list tasks, create tasks, complete tasks)
-│   └── gmail.py             # Stub (phase future)
+│   ├── google_gmail_service.py  # Gmail API (list, get, thread, drafts, send, reply)
+│   └── gmail.py             # Deprecated stub (kept for compatibility)
 ├── utils/
-│   └── date_utils.py    # Timezone helpers (today_bounds, parse_datetime, week_bounds)
-tests/                   # pytest tests (48 tests)
+│   ├── date_utils.py    # Timezone helpers (today_bounds, parse_datetime, week_bounds)
+│   └── gmail_utils.py   # Gmail helpers (MIME, headers, body extraction, formatting)
+tests/                   # pytest tests (87 tests)
 scripts/
 ├── set_telegram_webhook.py
 └── get_telegram_webhook_info.py
@@ -64,6 +66,9 @@ requirements.txt
 - `OPENAI_API_KEY`, `OPENAI_MODEL` (default: `gpt-5-mini`)
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
 - `GOOGLE_OAUTH_SCOPES` — defaults to `calendar.events tasks`
+- `GOOGLE_GMAIL_ENABLED` — `true` (default) or `false`
+- `GOOGLE_GMAIL_SCOPES` — defaults to `gmail.readonly gmail.compose`
+- `GMAIL_INBOX_QUERY_DEFAULT`, `GMAIL_MAX_LIST_RESULTS`
 - `GOOGLE_ENCRYPTION_KEY` — reserved for future token encryption
 - `APP_ENV`, `TIMEZONE`, `APP_BASE_URL`
 

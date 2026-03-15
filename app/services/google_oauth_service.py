@@ -14,15 +14,16 @@ from app.models.google_credential import GoogleCredential
 
 logger = logging.getLogger(__name__)
 
-# TODO: When GOOGLE_ENCRYPTION_KEY is set, encrypt access_token and refresh_token
-# before persisting and decrypt on read. For now tokens are stored in plain text.
-# In production, consider using a secrets manager or envelope encryption.
-
 _pending_states: dict[str, str] = {}
+
+GMAIL_SCOPES = {
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.compose",
+}
 
 
 def _get_scopes() -> list[str]:
-    return settings.google_oauth_scopes.split()
+    return settings.all_google_scopes.split()
 
 
 def _make_flow() -> Flow:
@@ -67,10 +68,6 @@ def exchange_code(db: Session, code: str, state: str) -> GoogleCredential:
 
     creds = flow.credentials
     if not creds.refresh_token:
-        # NOTE: Google only returns refresh_token on first consent.
-        # If re-authorizing, the user may need to revoke app access in
-        # https://myaccount.google.com/permissions and re-consent.
-        # The flow uses prompt=consent to maximize chances of getting it.
         raise ValueError(
             "O Google não retornou um refresh_token. "
             "Isso pode acontecer ao reconectar. "
@@ -152,16 +149,35 @@ def get_credentials(db: Session, user_id: str) -> Credentials | None:
     return refresh_credentials(db, user_id)
 
 
+def has_gmail_scopes(db: Session, user_id: str) -> bool:
+    cred = db.query(GoogleCredential).filter(GoogleCredential.user_id == user_id).first()
+    if cred is None or not cred.scope:
+        return False
+    granted = set(cred.scope.split())
+    return GMAIL_SCOPES.issubset(granted)
+
+
 def get_status(db: Session, user_id: str) -> dict[str, Any]:
     cred = db.query(GoogleCredential).filter(GoogleCredential.user_id == user_id).first()
     if cred is None or not cred.access_token:
-        return {"connected": False, "scope": "", "token_expiry": None}
+        return {
+            "connected": False,
+            "scope": "",
+            "token_expiry": None,
+            "gmail_enabled": False,
+            "calendar_enabled": False,
+            "tasks_enabled": False,
+        }
 
+    granted = set(cred.scope.split()) if cred.scope else set()
     return {
         "connected": True,
         "scope": cred.scope,
         "token_expiry": cred.token_expiry.isoformat() if cred.token_expiry else None,
         "has_refresh_token": cred.refresh_token is not None,
+        "gmail_enabled": GMAIL_SCOPES.issubset(granted),
+        "calendar_enabled": "https://www.googleapis.com/auth/calendar.events" in granted,
+        "tasks_enabled": "https://www.googleapis.com/auth/tasks" in granted,
     }
 
 

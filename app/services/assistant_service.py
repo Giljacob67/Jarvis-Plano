@@ -15,6 +15,7 @@ from app.services.openai_service import OpenAIService
 from app.services import google_oauth_service
 from app.services import google_calendar as google_calendar_service
 from app.services import google_tasks as google_tasks_service
+from app.services import google_gmail_service
 from app.schemas.day import DayOverview, CalendarEvent, Task, Email
 from app.utils.date_utils import parse_datetime_local
 
@@ -82,11 +83,27 @@ async def get_real_or_mock_day_overview(db: Session, user_id: str) -> DayOvervie
         logger.exception("Failed to get Google Tasks, falling back to mock")
         task_items = get_mock_day_overview().tasks
 
+    email_items: list[Email] = []
+    if status.get("gmail_enabled"):
+        try:
+            priority_emails = await google_gmail_service.get_priority_emails(db, user_id, max_results=5)
+            email_items = [
+                Email(
+                    subject=m.get("subject", "(sem assunto)"),
+                    sender=m.get("from", "desconhecido"),
+                    snippet=m.get("snippet", ""),
+                    priority="high" if "IMPORTANT" in m.get("labelIds", []) else "normal",
+                )
+                for m in priority_emails
+            ]
+        except Exception:
+            logger.exception("Failed to get priority emails")
+
     return DayOverview(
         date=today,
         calendar=cal_items,
         tasks=task_items,
-        emails=[],
+        emails=email_items,
     )
 
 
@@ -172,6 +189,61 @@ async def tool_executor(tool_name: str, tool_args: dict[str, Any], db: Session |
         if not db:
             return {"connected": False}
         return google_oauth_service.get_status(db, user_id)
+
+    if tool_name == "get_gmail_connection_status":
+        if not db:
+            return {"connected": False, "gmail_enabled": False}
+        return google_oauth_service.get_status(db, user_id)
+
+    if tool_name == "get_inbox_summary":
+        if not db:
+            return {"error": "Banco não disponível"}
+        max_results = tool_args.get("max_results", 5)
+        return await google_gmail_service.summarize_inbox(db, user_id, max_results=max_results)
+
+    if tool_name == "search_emails":
+        if not db:
+            return {"error": "Banco não disponível"}
+        query = tool_args.get("query", "")
+        max_results = tool_args.get("max_results", 10)
+        return await google_gmail_service.search_emails(db, user_id, query=query, max_results=max_results)
+
+    if tool_name == "get_email_thread":
+        if not db:
+            return {"error": "Banco não disponível"}
+        thread_id = tool_args.get("thread_id", "")
+        return await google_gmail_service.get_thread(db, user_id, thread_id=thread_id)
+
+    if tool_name == "create_email_draft":
+        if not db:
+            return {"error": "Banco não disponível"}
+        to = tool_args.get("to", "")
+        subject = tool_args.get("subject", "")
+        body = tool_args.get("body", "")
+        return await google_gmail_service.create_draft(db, user_id, to=to, subject=subject, body=body)
+
+    if tool_name == "create_reply_draft":
+        if not db:
+            return {"error": "Banco não disponível"}
+        message_id = tool_args.get("message_id", "")
+        body = tool_args.get("body", "")
+        return await google_gmail_service.create_reply_draft(db, user_id, message_id=message_id, body=body)
+
+    if tool_name == "list_email_drafts":
+        if not db:
+            return {"error": "Banco não disponível"}
+        max_results = tool_args.get("max_results", 10)
+        return await google_gmail_service.list_drafts(db, user_id, max_results=max_results)
+
+    if tool_name == "send_email_draft":
+        if not db:
+            return {"error": "Banco não disponível"}
+        draft_id = tool_args.get("draft_id", "")
+        return {
+            "status": "draft_only",
+            "draft_id": draft_id,
+            "message": f"Para enviar este rascunho, use o comando /senddraft {draft_id}. O envio direto por texto livre não é permitido por segurança.",
+        }
 
     return {"error": f"Tool '{tool_name}' não reconhecida"}
 

@@ -122,10 +122,116 @@ TOOLS = [
         "description": "Verifica se a conta Google do usuário está conectada",
         "parameters": {"type": "object", "properties": {}, "required": []},
     },
+    {
+        "type": "function",
+        "name": "get_gmail_connection_status",
+        "description": "Verifica se o Gmail do usuário está conectado e com os escopos corretos",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "type": "function",
+        "name": "get_inbox_summary",
+        "description": "Retorna um resumo dos e-mails não lidos mais importantes da inbox",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "max_results": {
+                    "type": "integer",
+                    "description": "Número máximo de e-mails no resumo",
+                    "default": 5,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "type": "function",
+        "name": "search_emails",
+        "description": "Busca e-mails usando sintaxe de busca do Gmail (ex: from:user@example.com is:unread)",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Query de busca no formato Gmail"},
+                "max_results": {
+                    "type": "integer",
+                    "description": "Número máximo de resultados",
+                    "default": 10,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "get_email_thread",
+        "description": "Retorna todas as mensagens de uma thread de e-mail",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "thread_id": {"type": "string", "description": "ID da thread do Gmail"},
+            },
+            "required": ["thread_id"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "create_email_draft",
+        "description": "Cria um rascunho de e-mail novo",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Endereço do destinatário"},
+                "subject": {"type": "string", "description": "Assunto do e-mail"},
+                "body": {"type": "string", "description": "Corpo do e-mail em texto simples"},
+            },
+            "required": ["to", "subject", "body"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "create_reply_draft",
+        "description": "Cria um rascunho de resposta a um e-mail existente, com headers MIME corretos (In-Reply-To, References)",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "message_id": {"type": "string", "description": "ID da mensagem original no Gmail"},
+                "body": {"type": "string", "description": "Corpo da resposta em texto simples"},
+            },
+            "required": ["message_id", "body"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "list_email_drafts",
+        "description": "Lista os rascunhos de e-mail existentes",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "max_results": {
+                    "type": "integer",
+                    "description": "Número máximo de rascunhos",
+                    "default": 10,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "type": "function",
+        "name": "send_email_draft",
+        "description": "Envia um rascunho de e-mail. ATENÇÃO: por segurança, quando chamado via texto livre, NÃO envia — apenas retorna instrução para usar /senddraft",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "draft_id": {"type": "string", "description": "ID do rascunho a enviar"},
+            },
+            "required": ["draft_id"],
+        },
+    },
 ]
 
 SENSITIVE_KEYWORDS = [
-    "enviar e-mail", "send email", "apagar", "deletar", "excluir",
+    "apagar", "deletar", "excluir",
     "cancelar evento", "editar agenda", "modificar evento", "remover",
 ]
 

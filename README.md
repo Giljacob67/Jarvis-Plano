@@ -2,7 +2,7 @@
 
 Assistente pessoal de produtividade via Telegram, construído com Python e FastAPI.
 
-Integra com Telegram, OpenAI, Google Calendar e Google Tasks. Gmail será adicionado em fase futura.
+Integra com Telegram, OpenAI, Google Calendar, Google Tasks e Gmail.
 
 ## Arquitetura
 
@@ -10,7 +10,7 @@ Integra com Telegram, OpenAI, Google Calendar e Google Tasks. Gmail será adicio
 - **IA**: OpenAI Responses API com function calling
 - **Bot**: Telegram Bot API via webhooks
 - **Memória**: SQLite local (tabelas: users, conversations, messages, memory_items, action_logs, google_credentials)
-- **Google**: OAuth 2.0 + Google Calendar API + Google Tasks API
+- **Google**: OAuth 2.0 + Google Calendar API + Google Tasks API + Gmail API
 - **Deploy**: Replit (workflow único, porta 8000)
 
 ## Endpoints
@@ -22,8 +22,8 @@ Integra com Telegram, OpenAI, Google Calendar e Google Tasks. Gmail será adicio
 | POST | `/webhooks/telegram` | Recebe updates do webhook do Telegram |
 | GET | `/auth/google/start` | Inicia fluxo OAuth Google (redireciona para Google) |
 | GET | `/auth/google/callback` | Callback OAuth Google (troca code por tokens) |
-| GET | `/auth/google/status` | Status da conexão Google |
-| POST | `/auth/google/disconnect` | Revoga e remove tokens Google |
+| GET | `/auth/google/status` | Status da conexão Google (inclui gmail_enabled, calendar_enabled, tasks_enabled) |
+| POST | `/auth/google/disconnect` | Revoga token no Google e remove tokens locais |
 
 ## Comandos do Bot Telegram
 
@@ -31,14 +31,22 @@ Integra com Telegram, OpenAI, Google Calendar e Google Tasks. Gmail será adicio
 |---------|-----------|
 | `/start` | Mensagem de boas-vindas e lista de comandos |
 | `/help` | Lista de comandos disponíveis |
-| `/myday` | Resumo do dia (agenda e tarefas — dados reais se Google conectado) |
+| `/myday` | Resumo do dia (agenda, tarefas, e-mails prioritários) |
 | `/remember <texto>` | Salva uma anotação/lembrete |
 | `/memories` | Lista anotações recentes |
 | `/connectgoogle` | Envia link para conectar conta Google |
-| `/google` | Mostra status da conexão Google |
+| `/google` | Mostra status da conexão Google (Calendar, Tasks, Gmail) |
 | `/tasks` | Lista tarefas pendentes do Google Tasks |
 | `/newtask <titulo>` | Cria nova tarefa no Google Tasks |
 | `/newevent <titulo> \| <início> \| <fim>` | Cria evento no Google Calendar |
+| `/inbox` | Lista e-mails recentes da inbox |
+| `/emailsearch <consulta>` | Busca e-mails com sintaxe Gmail |
+| `/thread <thread_id>` | Mostra thread de e-mail completa |
+| `/drafts` | Lista rascunhos de e-mail |
+| `/draftemail <para> \| <assunto> \| <corpo>` | Cria rascunho de e-mail |
+| `/replydraft <message_id> \| <corpo>` | Cria rascunho de resposta a um e-mail |
+| `/senddraft <draft_id>` | Envia rascunho de e-mail |
+| `/inboxsummary` | Resumo da inbox (e-mails não lidos importantes) |
 | Texto livre | Conversa com o assistente via OpenAI |
 
 ## 1. Configurar Google OAuth
@@ -47,7 +55,7 @@ Integra com Telegram, OpenAI, Google Calendar e Google Tasks. Gmail será adicio
 
 1. Acesse [Google Cloud Console](https://console.cloud.google.com/)
 2. Crie ou selecione um projeto
-3. Ative as APIs: **Google Calendar API** e **Google Tasks API**
+3. Ative as APIs: **Google Calendar API**, **Google Tasks API** e **Gmail API**
 4. Vá em **APIs & Services > Credentials**
 5. Clique em **Create Credentials > OAuth 2.0 Client ID**
 6. Tipo: **Web application**
@@ -68,8 +76,27 @@ Se houver qualquer diferença (mesmo um `/` no final), o Google retornará erro 
 
 - `https://www.googleapis.com/auth/calendar.events` — Ler e criar eventos
 - `https://www.googleapis.com/auth/tasks` — Ler e criar tarefas
+- `https://www.googleapis.com/auth/gmail.readonly` — Ler e-mails e metadados
+- `https://www.googleapis.com/auth/gmail.compose` — Criar rascunhos e enviar e-mails
 
-Gmail **não** faz parte desta fase.
+### ⚠️ Sobre escopos do Gmail
+
+Os escopos `gmail.readonly` e `gmail.compose` são classificados como "sensíveis" pelo Google. Isso significa que:
+
+1. Para uso pessoal/teste, o app pode funcionar sem verificação (com aviso "app não verificado")
+2. Para distribuição pública, o app precisará passar pela verificação do Google
+3. O usuário verá uma tela de aviso do Google ao autorizar — basta clicar em "Avançado" > "Acessar"
+
+### Reconsentimento (reconectar com novos escopos)
+
+Se a conta Google já estava conectada antes da Fase 4 (só com Calendar/Tasks), será necessário reconectar para adicionar os escopos de Gmail:
+
+1. No Telegram, envie `/google` para ver o status atual
+2. Se Gmail aparecer como ❌, envie `/connectgoogle`
+3. Autorize os novos escopos na tela do Google
+4. Após redirecionamento, o Gmail estará habilitado
+
+O sistema preserva `access_type=offline` e `include_granted_scopes=true`, então os escopos anteriores são mantidos.
 
 ## 2. Como rodar no Workspace (desenvolvimento)
 
@@ -100,7 +127,11 @@ Cadastre os seguintes Secrets no painel do Replit (Tools > Secrets):
 | `GOOGLE_CLIENT_ID` | Sim | Client ID do Google OAuth |
 | `GOOGLE_CLIENT_SECRET` | Sim | Client Secret do Google OAuth |
 | `GOOGLE_REDIRECT_URI` | Sim | URI de callback (ex: `https://jarvis-pessoal.replit.app/auth/google/callback`) |
-| `GOOGLE_OAUTH_SCOPES` | Opcional | Escopos (padrão: `calendar.events tasks`) |
+| `GOOGLE_OAUTH_SCOPES` | Opcional | Escopos Calendar/Tasks (padrão: `calendar.events tasks`) |
+| `GOOGLE_GMAIL_ENABLED` | Opcional | `true` (padrão) ou `false` para desabilitar Gmail |
+| `GOOGLE_GMAIL_SCOPES` | Opcional | Escopos Gmail (padrão: `gmail.readonly gmail.compose`) |
+| `GMAIL_INBOX_QUERY_DEFAULT` | Opcional | Query padrão para /inbox (padrão: `in:inbox newer_than:7d`) |
+| `GMAIL_MAX_LIST_RESULTS` | Opcional | Máximo de e-mails listados (padrão: `10`) |
 | `GOOGLE_ENCRYPTION_KEY` | Reservado | Para criptografia futura de tokens |
 | `APP_ENV` | Opcional | `development` (padrão) ou `production` |
 | `TIMEZONE` | Opcional | Fuso horário, padrão `America/Sao_Paulo` |
@@ -150,19 +181,38 @@ python scripts/get_telegram_webhook_info.py
 1. Configure os Secrets `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` e `GOOGLE_REDIRECT_URI`
 2. No Telegram, envie `/connectgoogle` ao bot
 3. Clique no link recebido
-4. Autorize as permissões no Google
+4. Autorize as permissões no Google (Calendar, Tasks e Gmail)
 5. Após redirecionamento, o Telegram confirmará a conexão
-6. Envie `/google` para verificar o status
-7. Envie `/myday` para ver dados reais da agenda
+6. Envie `/google` para verificar o status (Calendar ✅, Tasks ✅, Gmail ✅)
+7. Envie `/myday` para ver dados reais da agenda e e-mails
 
-### Testando novos comandos
+### Testando comandos Google
 
 1. `/connectgoogle` — recebe link para conectar Google
-2. `/google` — mostra "conectada" ou "não conectada"
+2. `/google` — mostra "conectada" e status de cada serviço
 3. `/tasks` — lista tarefas pendentes do Google Tasks
 4. `/newtask Comprar leite` — cria tarefa
 5. `/newevent Reunião | 2026-03-16 09:00 | 2026-03-16 10:00` — cria evento
 6. `/myday` — resumo com dados reais
+
+### Testando comandos Gmail
+
+1. `/inbox` — lista últimos e-mails da inbox
+2. `/emailsearch from:joao@email.com` — busca e-mails por remetente
+3. `/emailsearch is:unread subject:relatório` — busca por assunto
+4. `/emailsearch newer_than:3d` — e-mails dos últimos 3 dias
+5. `/thread <thread_id>` — ver thread completa (ID obtido via /inbox)
+6. `/draftemail joao@email.com | Reunião amanhã | Olá João, podemos marcar?` — criar rascunho
+7. `/replydraft <message_id> | Obrigado, confirmo presença!` — criar rascunho de resposta
+8. `/drafts` — listar rascunhos existentes
+9. `/senddraft <draft_id>` — enviar rascunho
+10. `/inboxsummary` — resumo rápido da inbox
+
+### ⚠️ Nota sobre queries com datas na Gmail API
+
+A Gmail API interpreta queries com datas literais (ex: `after:2026/03/15`) no fuso **PST (Pacific Standard Time)**, não no fuso local do usuário. Para buscas por data exata em código, o sistema usa timestamps Unix em segundos (via helper `date_to_gmail_after_query`) para evitar ambiguidades.
+
+Para queries de usuário via `/emailsearch`, use formatos relativos como `newer_than:3d` quando possível, ou esteja ciente da diferença de fuso em datas absolutas.
 
 ## 3. Como publicar (deploy always-on)
 
@@ -204,8 +254,19 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - Novos comandos Telegram: /connectgoogle, /google, /tasks, /newtask, /newevent
 - Novas tools OpenAI: list_tasks, create_task, list_upcoming_events, create_event
 
+### Fase 4 ✅
+- Gmail API: ler inbox, buscar e-mails, ver threads, criar rascunhos, enviar
+- Reconsentimento OAuth para adicionar escopos Gmail
+- Status detalhado: gmail_enabled, calendar_enabled, tasks_enabled
+- 8 novos comandos Telegram: /inbox, /emailsearch, /thread, /drafts, /draftemail, /replydraft, /senddraft, /inboxsummary
+- 8 novas tools OpenAI para Gmail
+- /replydraft com headers MIME completos (In-Reply-To, References, threadId)
+- Envio via texto livre cria rascunho (segurança); /senddraft para enviar
+- /myday inclui e-mails prioritários quando Gmail conectado
+
 ### Fase futura
-- Gmail (e-mails reais)
 - Transcrição de voz via OpenAI Whisper
 - Edição/exclusão de eventos e tarefas (com aprovação explícita)
+- Push notifications do Gmail
+- Anexos de e-mail
 - Criptografia de tokens Google
