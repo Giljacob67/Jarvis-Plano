@@ -110,10 +110,14 @@ def exchange_code(db: Session, code: str, state: str) -> GoogleCredential:
     return credential
 
 
-def get_credentials(db: Session, user_id: str) -> Credentials | None:
+def refresh_credentials(db: Session, user_id: str) -> Credentials | None:
     cred = db.query(GoogleCredential).filter(GoogleCredential.user_id == user_id).first()
     if cred is None or not cred.access_token:
         return None
+
+    expiry = cred.token_expiry
+    if expiry and expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
 
     credentials = Credentials(
         token=cred.access_token,
@@ -122,14 +126,18 @@ def get_credentials(db: Session, user_id: str) -> Credentials | None:
         client_id=settings.google_client_id,
         client_secret=settings.google_client_secret,
         scopes=cred.scope.split() if cred.scope else _get_scopes(),
+        expiry=expiry,
     )
 
     if credentials.expired and credentials.refresh_token:
         from google.auth.transport.requests import Request as GoogleAuthRequest
         try:
             credentials.refresh(GoogleAuthRequest())
+            new_expiry = credentials.expiry
+            if new_expiry and new_expiry.tzinfo is None:
+                new_expiry = new_expiry.replace(tzinfo=timezone.utc)
             cred.access_token = credentials.token
-            cred.token_expiry = credentials.expiry.replace(tzinfo=timezone.utc) if credentials.expiry and credentials.expiry.tzinfo is None else credentials.expiry
+            cred.token_expiry = new_expiry
             cred.updated_at = datetime.now(timezone.utc)
             db.commit()
             logger.info("Refreshed Google token for user=%s", user_id)
@@ -138,6 +146,10 @@ def get_credentials(db: Session, user_id: str) -> Credentials | None:
             return None
 
     return credentials
+
+
+def get_credentials(db: Session, user_id: str) -> Credentials | None:
+    return refresh_credentials(db, user_id)
 
 
 def get_status(db: Session, user_id: str) -> dict[str, Any]:

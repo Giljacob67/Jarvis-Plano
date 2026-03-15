@@ -68,7 +68,7 @@ async def telegram_webhook(
     db.commit()
 
     chat_id = update.message.chat.id
-    user_id = sender_id
+    user_id = str(sender_id)
     msg = update.message
 
     if msg.voice:
