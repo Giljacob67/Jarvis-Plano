@@ -1,0 +1,86 @@
+Crie um app Python backend-first para um assistente pessoal de produtividade chamado "Jarvis Pessoal".
+
+Quero a primeira versão como uma API em FastAPI, pronta para rodar no Replit, sem frontend por enquanto.
+
+Objetivo desta primeira entrega:
+- gerar um scaffold limpo, organizado e fácil de evoluir
+- preparar a base para Telegram (texto e áudio), OpenAI, Google Calendar, Gmail e Google Tasks
+- deixar integrações reais como stubs/mocks com TODOs claros
+- deixar o projeto pronto para depois ser publicado como app always-on
+
+Requisitos técnicos:
+- usar Poetry e pyproject.toml
+- usar FastAPI
+- usar Pydantic Settings para env vars
+- usar SQLAlchemy com SQLite por padrão, mas com DATABASE_URL configurável para trocar depois
+- usar tipagem em todo o código
+- usar logs estruturados
+- tratamento básico de erros
+- código simples, legível e modular
+
+Estrutura desejada:
+- app/main.py
+- app/config.py
+- app/db.py
+- app/models/
+- app/schemas/
+- app/routes/
+- app/services/
+- app/utils/
+- tests/
+- .env.example
+- README.md
+
+Crie os endpoints:
+- GET /health
+- POST /webhooks/telegram
+- GET /auth/google/start
+- GET /auth/google/callback
+- GET /me/day
+
+Comportamento inicial:
+- GET /health retorna status ok
+- GET /me/day retorna dados mockados de agenda, tarefas e e-mails prioritários
+- POST /webhooks/telegram aceita payload básico do Telegram e responde com um JSON simples confirmando recebimento
+- se vier texto, registre a mensagem no log
+- se vier áudio/voice, registre que o fluxo de transcrição será implementado depois
+- endpoints de auth Google podem ser stubs com resposta clara de “not implemented yet”
+
+Crie serviços stub para:
+- TelegramService
+- OpenAIService
+- GoogleCalendarService
+- GmailService
+- GoogleTasksService
+
+Dependências esperadas:
+- fastapi
+- uvicorn
+- pydantic-settings
+- sqlalchemy
+- httpx
+- python-dotenv
+- pytest
+
+Também quero:
+- um arquivo .env.example com:
+  OPENAI_API_KEY=
+  TELEGRAM_BOT_TOKEN=
+  TELEGRAM_WEBHOOK_SECRET=
+  GOOGLE_CLIENT_ID=
+  GOOGLE_CLIENT_SECRET=
+  GOOGLE_REDIRECT_URI=
+  DATABASE_URL=
+  APP_ENV=
+- README com instruções para rodar no Replit
+- comentários curtos apenas onde forem úteis
+- sem frontend
+- sem Docker
+- sem implementar integrações reais ainda
+
+No final:
+1. rode o projeto
+2. corrija erros de import/dependência
+3. me mostre a árvore de arquivos criada
+4. me diga quais Secrets eu preciso cadastrar no Replit
+5. me diga qual endpoint devo usar depois para configurar o webhook do Telegram
