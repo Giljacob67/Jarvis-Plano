@@ -14,7 +14,8 @@ Hybrid workspace: a pnpm monorepo (TypeScript) plus a standalone Python FastAPI 
 - **Bot**: Telegram Bot API via webhooks
 - **Google**: OAuth 2.0 + Calendar API + Tasks API + Gmail API (real data when connected, mock fallback)
 - **Workflow**: `Jarvis Pessoal` — runs `uvicorn app.main:app --host 0.0.0.0 --port 8000`
-- **Tests**: `pytest tests/ -v` (87 tests)
+- **Voice**: OpenAI Audio API (transcribe + TTS), Telegram voice/audio download and send
+- **Tests**: `pytest tests/ -v` (114 tests)
 
 ### Python project structure
 
@@ -31,15 +32,17 @@ app/
 │   ├── message.py       # Message (role, text, raw_json)
 │   ├── memory_item.py   # MemoryItem (user notes/reminders)
 │   ├── action_log.py    # ActionLog (sensitive actions blocked)
-│   └── google_credential.py  # GoogleCredential (OAuth tokens per user)
+│   ├── google_credential.py  # GoogleCredential (OAuth tokens per user)
+│   └── voice_message_log.py  # VoiceMessageLog (voice processing metadata, transcription_raw_json)
 ├── schemas/             # Pydantic schemas (health, telegram, day, common)
 ├── routes/
 │   ├── health.py        # GET /health
-│   ├── telegram.py      # POST /webhooks/telegram (commands: /start, /help, /myday, /remember, /memories, /connectgoogle, /google, /tasks, /newtask, /newevent, /inbox, /emailsearch, /thread, /drafts, /draftemail, /replydraft, /senddraft, /inboxsummary)
+│   ├── telegram.py      # POST /webhooks/telegram (commands + voice/audio pipeline)
 │   ├── auth.py          # Google OAuth routes (/start, /callback, /status, /disconnect)
 │   └── day.py           # GET /me/day (real data or mock fallback)
 ├── services/
-│   ├── telegram.py      # TelegramService (reused httpx.AsyncClient)
+│   ├── telegram.py      # TelegramService (download_file, send_voice, send_audio)
+│   ├── audio_service.py   # AudioService (transcribe, TTS, voice preference)
 │   ├── openai_service.py  # OpenAIService (Responses API, function calling, 16 tools)
 │   ├── assistant_service.py  # Orchestrates context, history, memories, tool execution, Google/Gmail fallback
 │   ├── memory_service.py    # save_memory, list_memories, search_memories
@@ -69,6 +72,12 @@ requirements.txt
 - `GOOGLE_GMAIL_ENABLED` — `true` (default) or `false`
 - `GOOGLE_GMAIL_SCOPES` — defaults to `gmail.readonly gmail.compose`
 - `GMAIL_INBOX_QUERY_DEFAULT`, `GMAIL_MAX_LIST_RESULTS`
+- `OPENAI_TRANSCRIBE_MODEL` — default `gpt-4o-mini-transcribe`
+- `OPENAI_TTS_MODEL` — default `gpt-4o-mini-tts`
+- `VOICE_RESPONSES_ENABLED` — `false` (default); set `true` to enable TTS replies
+- `VOICE_RESPONSE_VOICE` — TTS voice (default: `alloy`)
+- `MAX_AUDIO_FILE_MB` — max audio size (default: `19`, max: `20`)
+- `TEMP_AUDIO_DIR` — temp dir for audio files (default: `/tmp/jarvis_audio`)
 - `GOOGLE_ENCRYPTION_KEY` — reserved for future token encryption
 - `APP_ENV`, `TIMEZONE`, `APP_BASE_URL`
 

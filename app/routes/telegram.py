@@ -1,5 +1,7 @@
 import json
 import logging
+import os
+import uuid
 
 from fastapi import APIRouter, Header, Request, Depends
 from fastapi.responses import JSONResponse
@@ -11,6 +13,8 @@ from app.schemas.telegram import TelegramUpdate, TelegramWebhookResponse
 from app.models.processed_update import ProcessedTelegramUpdate
 from app.models.conversation import Conversation
 from app.models.message import Message
+from app.models.action_log import ActionLog
+from app.models.voice_message_log import VoiceMessageLog
 from app.services import telegram_service
 from app.services.assistant_service import (
     handle_free_text,
@@ -23,6 +27,7 @@ from app.services import google_oauth_service
 from app.services import google_calendar as google_calendar_service
 from app.services import google_tasks as google_tasks_service
 from app.services import google_gmail_service
+from app.services import audio_service
 from app.utils.date_utils import parse_datetime_local
 from app.utils.gmail_utils import format_messages_list_telegram
 
@@ -48,8 +53,11 @@ HELP_TEXT = (
     "/replydraft <message_id> | <corpo> — responder e-mail (rascunho)\n"
     "/senddraft <draft_id> — enviar rascunho\n"
     "/inboxsummary — resumo da inbox\n"
+    "/voiceon — ativar respostas por áudio\n"
+    "/voiceoff — desativar respostas por áudio\n"
+    "/voicestatus — status das respostas por áudio\n"
     "/help — ver esta mensagem\n\n"
-    "Ou envie texto livre para conversar comigo!"
+    "Ou envie texto livre ou nota de voz para conversar comigo!"
 )
 
 START_TEXT = (
@@ -68,6 +76,182 @@ def _gmail_not_ready_msg(db: Session, user_id: str) -> str | None:
             "Use /connectgoogle para reconectar com os escopos de Gmail."
         )
     return None
+
+
+def _log_action(db: Session, event_type: str, status: str, details: dict) -> None:
+    entry = ActionLog(
+        event_type=event_type,
+        status=status,
+        details_json=json.dumps(details, ensure_ascii=False),
+    )
+    db.add(entry)
+    db.commit()
+
+
+async def _handle_voice_message(
+    db: Session,
+    user_id: str,
+    chat_id: int,
+    update_id: int,
+    file_id: str,
+    file_unique_id: str,
+    mime_type: str | None,
+    duration: int | None,
+    file_size: int | None,
+    source_type: str,
+) -> str:
+    conv = _get_or_create_conversation(db, user_id)
+
+    voice_log = VoiceMessageLog(
+        user_id=user_id,
+        conversation_id=conv.id,
+        telegram_update_id=update_id,
+        telegram_file_id=file_id,
+        telegram_file_unique_id=file_unique_id,
+        mime_type=mime_type,
+        duration_seconds=duration,
+        original_file_size=file_size,
+        processing_status="received",
+    )
+    db.add(voice_log)
+    db.commit()
+    db.refresh(voice_log)
+
+    _log_action(db, "telegram_voice_received", "success", {
+        "user_id": user_id,
+        "file_id": file_id,
+        "source_type": source_type,
+        "duration": duration,
+        "file_size": file_size,
+    })
+
+    if file_size and file_size > settings.max_audio_file_mb * 1024 * 1024:
+        voice_log.processing_status = "error"
+        voice_log.error_message = f"Arquivo muito grande: {file_size / (1024*1024):.1f} MB"
+        db.commit()
+        return f"⚠️ O arquivo de áudio é muito grande ({file_size / (1024*1024):.1f} MB). O limite é {settings.max_audio_file_mb} MB."
+
+    temp_path = None
+    try:
+        temp_dir = audio_service.ensure_temp_dir()
+        ext = ".ogg" if source_type == "voice" else (".mp3" if not mime_type else _ext_from_mime(mime_type))
+        temp_path = str(temp_dir / f"{uuid.uuid4().hex}{ext}")
+        voice_log.local_temp_path = temp_path
+
+        audio_bytes = await telegram_service.download_file(file_id)
+        with open(temp_path, "wb") as f:
+            f.write(audio_bytes)
+
+        voice_log.processing_status = "transcribing"
+        db.commit()
+
+        result = await audio_service.transcribe_file(temp_path)
+
+        if result.get("error"):
+            voice_log.processing_status = "transcription_failed"
+            voice_log.error_message = result["error"]
+            db.commit()
+            _log_action(db, "audio_transcription_failed", "error", {
+                "user_id": user_id,
+                "error": result["error"],
+            })
+            return f"❌ Não consegui transcrever o áudio: {result['error']}"
+
+        transcription = result.get("text", "")
+        voice_log.transcription_text = transcription
+        voice_log.transcription_model = settings.openai_transcribe_model
+        voice_log.transcription_raw_json = result.get("raw_json")
+        voice_log.processing_status = "transcribed"
+        db.commit()
+
+        _log_action(db, "audio_transcribed", "success", {
+            "user_id": user_id,
+            "text_length": len(transcription),
+            "model": settings.openai_transcribe_model,
+        })
+
+        if not transcription.strip():
+            return "🎤 Recebi seu áudio, mas a transcrição ficou vazia. Pode tentar novamente ou enviar em texto?"
+
+        user_msg = Message(
+            conversation_id=conv.id,
+            role="user",
+            channel="telegram_voice",
+            text=transcription,
+            raw_json=json.dumps({
+                "voice_log_id": voice_log.id,
+                "source_type": source_type,
+                "file_id": file_id,
+                "duration": duration,
+            }, ensure_ascii=False),
+        )
+        db.add(user_msg)
+        db.commit()
+
+        reply_text = await handle_free_text(db, user_id, transcription)
+
+        voice_log.processing_status = "completed"
+        db.commit()
+
+        transcription_note = f"🎤 _{transcription}_\n\n" if len(transcription) < 500 else "🎤 _[áudio transcrito]_\n\n"
+        full_reply = f"{transcription_note}{reply_text}"
+
+        await telegram_service.send_message(chat_id, full_reply)
+
+        if audio_service.should_reply_with_voice(db, user_id):
+            await _send_voice_reply(db, chat_id, reply_text, user_id)
+
+        return ""
+
+    except Exception as e:
+        logger.exception("Voice processing failed for user=%s", user_id)
+        voice_log.processing_status = "error"
+        voice_log.error_message = str(e)
+        db.commit()
+        return f"❌ Erro ao processar áudio: {e}"
+    finally:
+        audio_service.cleanup_temp_file(temp_path)
+
+
+async def _send_voice_reply(db: Session, chat_id: int, text: str, user_id: str) -> None:
+    tts_result = await audio_service.synthesize_speech(text)
+    if tts_result.get("error") or not tts_result.get("audio_bytes"):
+        logger.warning("TTS failed, skipping voice reply: %s", tts_result.get("error"))
+        return
+
+    audio_bytes = tts_result["audio_bytes"]
+
+    try:
+        await telegram_service.send_voice(chat_id, audio_bytes)
+        _log_action(db, "audio_reply_generated", "success", {
+            "user_id": user_id,
+            "method": "send_voice",
+            "size": len(audio_bytes),
+        })
+    except Exception:
+        logger.info("send_voice failed, falling back to send_audio")
+        try:
+            await telegram_service.send_audio(chat_id, audio_bytes, filename="jarvis_response.mp3")
+            _log_action(db, "audio_reply_generated", "success", {
+                "user_id": user_id,
+                "method": "send_audio_fallback",
+                "size": len(audio_bytes),
+            })
+        except Exception:
+            logger.exception("send_audio fallback also failed")
+
+
+def _ext_from_mime(mime_type: str) -> str:
+    mime_map = {
+        "audio/ogg": ".ogg",
+        "audio/mpeg": ".mp3",
+        "audio/mp4": ".m4a",
+        "audio/wav": ".wav",
+        "audio/x-wav": ".wav",
+        "audio/webm": ".webm",
+        "audio/flac": ".flac",
+    }
+    return mime_map.get(mime_type, ".ogg")
 
 
 @router.post("/telegram", response_model=TelegramWebhookResponse)
@@ -113,30 +297,38 @@ async def telegram_webhook(
     msg = update.message
 
     if msg.voice:
-        conv = _get_or_create_conversation(db, user_id)
-        voice_meta = {
-            "type": "voice",
-            "file_id": msg.voice.file_id,
-            "duration": msg.voice.duration,
-            "mime_type": msg.voice.mime_type,
-            "file_size": msg.voice.file_size,
-        }
-        voice_msg = Message(
-            conversation_id=conv.id,
-            role="user",
-            channel="telegram",
-            text="[voice message]",
-            raw_json=json.dumps({"voice": voice_meta, "update_id": update.update_id}, ensure_ascii=False),
+        reply = await _handle_voice_message(
+            db=db,
+            user_id=user_id,
+            chat_id=chat_id,
+            update_id=update.update_id,
+            file_id=msg.voice.file_id,
+            file_unique_id=msg.voice.file_unique_id,
+            mime_type=msg.voice.mime_type,
+            duration=msg.voice.duration,
+            file_size=msg.voice.file_size,
+            source_type="voice",
         )
-        db.add(voice_msg)
-        db.commit()
+        if reply:
+            await telegram_service.send_message(chat_id, reply)
+        return TelegramWebhookResponse(ok=True, message="voice_processed")
 
-        reply_text = (
-            "🎤 Recebi seu áudio! A transcrição de voz será implementada em breve. "
-            "Por enquanto, envie sua mensagem como texto."
+    if msg.audio:
+        reply = await _handle_voice_message(
+            db=db,
+            user_id=user_id,
+            chat_id=chat_id,
+            update_id=update.update_id,
+            file_id=msg.audio.file_id,
+            file_unique_id=msg.audio.file_unique_id,
+            mime_type=msg.audio.mime_type,
+            duration=msg.audio.duration,
+            file_size=msg.audio.file_size,
+            source_type="audio",
         )
-        await telegram_service.send_message(chat_id, reply_text)
-        return TelegramWebhookResponse(ok=True, message="voice_noted")
+        if reply:
+            await telegram_service.send_message(chat_id, reply)
+        return TelegramWebhookResponse(ok=True, message="audio_processed")
 
     text = (msg.text or "").strip()
     if not text:
@@ -167,6 +359,35 @@ async def telegram_webhook(
             for i, m in enumerate(items, 1):
                 lines.append(f"{i}. [{m.category}] {m.content}")
             reply_text = "\n".join(lines)
+    elif text.startswith("/voiceon"):
+        audio_service.set_voice_preference(db, user_id, True)
+        if settings.voice_responses_enabled:
+            reply_text = "🔊 Respostas por áudio ativadas! Agora vou responder também com áudio quando você enviar mensagens."
+        else:
+            reply_text = (
+                "🔊 Preferência de áudio ativada para sua conta.\n"
+                "⚠️ Porém, as respostas por áudio estão desativadas globalmente (VOICE_RESPONSES_ENABLED=false). "
+                "Peça ao administrador para ativar."
+            )
+    elif text.startswith("/voiceoff"):
+        audio_service.set_voice_preference(db, user_id, False)
+        reply_text = "🔇 Respostas por áudio desativadas. Vou responder apenas em texto."
+    elif text.startswith("/voicestatus"):
+        global_enabled = settings.voice_responses_enabled
+        user_enabled = audio_service.get_voice_preference(db, user_id)
+        active = global_enabled and user_enabled
+        lines = [
+            "🎙️ Status de respostas por áudio:",
+            f"  Global: {'✅ ativado' if global_enabled else '❌ desativado'}",
+            f"  Sua preferência: {'✅ ativado' if user_enabled else '❌ desativado'}",
+            f"  Resultado: {'🔊 áudio ativo' if active else '🔇 apenas texto'}",
+        ]
+        reply_text = "\n".join(lines)
+    elif text.startswith("/transcribe"):
+        reply_text = (
+            "🎤 Para transcrever áudio, basta enviar uma nota de voz ou arquivo de áudio diretamente neste chat. "
+            "O Jarvis transcreverá automaticamente e responderá."
+        )
     elif text.startswith("/connectgoogle"):
         if not settings.app_base_url:
             reply_text = "⚠️ APP_BASE_URL não está configurado. Peça ao administrador para definir."

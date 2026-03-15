@@ -6,6 +6,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://api.telegram.org/bot{token}"
+_FILE_URL = "https://api.telegram.org/file/bot{token}/{file_path}"
 
 
 class TelegramService:
@@ -52,10 +53,43 @@ class TelegramService:
         resp.raise_for_status()
         return resp.json()
 
+    async def get_file(self, file_id: str) -> dict[str, Any]:
+        url = f"{self._base}/getFile"
+        resp = await self.client.post(url, json={"file_id": file_id})
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("result", {})
+
     async def download_file(self, file_id: str) -> bytes:
-        # TODO (Fase 3): Implement real file download for voice transcription
-        # 1. Call getFile to get file_path
-        # 2. Download from https://api.telegram.org/file/bot{token}/{file_path}
-        # 3. Return raw bytes for OpenAI Whisper
-        logger.info("download_file stub called for file_id=%s — will be implemented in Fase 3", file_id)
-        return b""
+        file_info = await self.get_file(file_id)
+        file_path = file_info.get("file_path", "")
+        if not file_path:
+            raise ValueError(f"No file_path returned for file_id={file_id}")
+        download_url = _FILE_URL.format(token=self._token, file_path=file_path)
+        logger.info("Downloading file file_id=%s", file_id)
+        resp = await self.client.get(download_url)
+        resp.raise_for_status()
+        return resp.content
+
+    async def send_voice(self, chat_id: int, audio_bytes: bytes, caption: str | None = None) -> dict[str, Any]:
+        url = f"{self._base}/sendVoice"
+        files = {"voice": ("voice.ogg", audio_bytes, "audio/ogg")}
+        data: dict[str, Any] = {"chat_id": str(chat_id)}
+        if caption:
+            data["caption"] = caption
+        logger.info("Sending voice to chat_id=%s (size=%d bytes)", chat_id, len(audio_bytes))
+        resp = await self.client.post(url, data=data, files=files)
+        resp.raise_for_status()
+        return resp.json()
+
+    async def send_audio(self, chat_id: int, audio_bytes: bytes, caption: str | None = None, filename: str = "response.mp3") -> dict[str, Any]:
+        url = f"{self._base}/sendAudio"
+        mime = "audio/ogg" if filename.endswith(".ogg") else "audio/mpeg"
+        files = {"audio": (filename, audio_bytes, mime)}
+        data: dict[str, Any] = {"chat_id": str(chat_id)}
+        if caption:
+            data["caption"] = caption
+        logger.info("Sending audio to chat_id=%s (size=%d bytes)", chat_id, len(audio_bytes))
+        resp = await self.client.post(url, data=data, files=files)
+        resp.raise_for_status()
+        return resp.json()

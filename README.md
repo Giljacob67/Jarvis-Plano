@@ -47,6 +47,11 @@ Integra com Telegram, OpenAI, Google Calendar, Google Tasks e Gmail.
 | `/replydraft <message_id> \| <corpo>` | Cria rascunho de resposta a um e-mail |
 | `/senddraft <draft_id>` | Envia rascunho de e-mail |
 | `/inboxsummary` | Resumo da inbox (e-mails não lidos importantes) |
+| `/voiceon` | Ativa respostas por áudio |
+| `/voiceoff` | Desativa respostas por áudio |
+| `/voicestatus` | Status das respostas por áudio |
+| `/transcribe` | Informação sobre transcrição (basta enviar áudio) |
+| Nota de voz / Áudio | Transcreve e processa como texto |
 | Texto livre | Conversa com o assistente via OpenAI |
 
 ## 1. Configurar Google OAuth
@@ -132,6 +137,12 @@ Cadastre os seguintes Secrets no painel do Replit (Tools > Secrets):
 | `GOOGLE_GMAIL_SCOPES` | Opcional | Escopos Gmail (padrão: `gmail.readonly gmail.compose`) |
 | `GMAIL_INBOX_QUERY_DEFAULT` | Opcional | Query padrão para /inbox (padrão: `in:inbox newer_than:7d`) |
 | `GMAIL_MAX_LIST_RESULTS` | Opcional | Máximo de e-mails listados (padrão: `10`) |
+| `OPENAI_TRANSCRIBE_MODEL` | Opcional | Modelo de transcrição (padrão: `gpt-4o-mini-transcribe`) |
+| `OPENAI_TTS_MODEL` | Opcional | Modelo de síntese de voz (padrão: `gpt-4o-mini-tts`) |
+| `VOICE_RESPONSES_ENABLED` | Opcional | `false` (padrão) — ativa respostas por áudio globalmente |
+| `VOICE_RESPONSE_VOICE` | Opcional | Voz para TTS (padrão: `alloy`) |
+| `MAX_AUDIO_FILE_MB` | Opcional | Limite de tamanho de áudio em MB (padrão: `19`, máx: `20`) |
+| `TEMP_AUDIO_DIR` | Opcional | Diretório para arquivos temporários de áudio (padrão: `/tmp/jarvis_audio`) |
 | `GOOGLE_ENCRYPTION_KEY` | Reservado | Para criptografia futura de tokens |
 | `APP_ENV` | Opcional | `development` (padrão) ou `production` |
 | `TIMEZONE` | Opcional | Fuso horário, padrão `America/Sao_Paulo` |
@@ -208,6 +219,32 @@ python scripts/get_telegram_webhook_info.py
 9. `/senddraft <draft_id>` — enviar rascunho
 10. `/inboxsummary` — resumo rápido da inbox
 
+### Voz no Telegram
+
+O Jarvis suporta mensagens de voz e arquivos de áudio no Telegram. O fluxo é:
+
+1. Você envia uma **nota de voz** (gravada diretamente no Telegram) ou um **arquivo de áudio** (anexo)
+2. O Jarvis baixa o arquivo, transcreve com a OpenAI Audio API e processa como texto normal
+3. A transcrição entra no mesmo fluxo do assistente (memória, Calendar, Tasks, Gmail, tools)
+4. Você recebe a resposta em texto, mostrando a transcrição original
+5. Se `VOICE_RESPONSES_ENABLED=true` e você ativou `/voiceon`, a resposta também vem em áudio
+
+**Diferença entre voice e audio no Telegram:**
+- **Voice** (nota de voz): gravada pelo botão de microfone do Telegram, formato OGG/Opus
+- **Audio** (arquivo de áudio): arquivo MP3/M4A/WAV enviado como anexo
+
+**Ativar/desativar respostas por áudio:**
+1. O administrador define `VOICE_RESPONSES_ENABLED=true` no ambiente (controle global)
+2. Cada usuário ativa com `/voiceon` e desativa com `/voiceoff`
+3. Ambas as condições precisam estar ativas para receber áudio
+
+**Envio de áudio de resposta (fallback):**
+O Jarvis tenta enviar a resposta como voice note (`sendVoice`). Se o formato não for compatível (Telegram exige OGG/Opus), faz fallback para `sendAudio`.
+
+**Limite de tamanho:** 19 MB por padrão (margem de segurança para o limite de 20 MB do `getFile` do Telegram). Configurável via `MAX_AUDIO_FILE_MB`.
+
+**Metadados de confiança:** Quando a resposta da OpenAI inclui logprobs ou sinais de confiança na transcrição, eles são persistidos no campo `transcription_raw_json` da tabela `voice_message_logs`.
+
 ### ⚠️ Nota sobre queries com datas na Gmail API
 
 A Gmail API interpreta queries com datas literais (ex: `after:2026/03/15`) no fuso **PST (Pacific Standard Time)**, não no fuso local do usuário. Para buscas por data exata em código, o sistema usa timestamps Unix em segundos (via helper `date_to_gmail_after_query`) para evitar ambiguidades.
@@ -264,8 +301,20 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - Envio via texto livre cria rascunho (segurança); /senddraft para enviar
 - /myday inclui e-mails prioritários quando Gmail conectado
 
+### Fase 5 ✅
+- Voz no Telegram: transcrição real + resposta por áudio opcional
+- Recebe notas de voz (OGG/Opus) e arquivos de áudio (MP3/M4A/WAV)
+- Transcrição via OpenAI Audio API (modelo configurável: gpt-4o-mini-transcribe)
+- Transcrição cai no mesmo fluxo de inteligência (memória, tools, Gmail, Calendar, Tasks)
+- Respostas por áudio opcionais via TTS (modelo configurável: gpt-4o-mini-tts)
+- Fallback sendVoice → sendAudio para compatibilidade
+- Tabela VoiceMessageLog com metadados completos e transcription_raw_json
+- Comandos /voiceon, /voiceoff, /voicestatus para preferência por usuário
+- Limite de 19 MB (margem para getFile do Telegram)
+- Limpeza automática de arquivos temporários
+
 ### Fase futura
-- Transcrição de voz via OpenAI Whisper
+- Voz em tempo real via Realtime API (usará client secrets efêmeros — nunca a chave principal no navegador)
 - Edição/exclusão de eventos e tarefas (com aprovação explícita)
 - Push notifications do Gmail
 - Anexos de e-mail

@@ -70,14 +70,18 @@ def test_telegram_no_message(client: TestClient) -> None:
     assert response.json()["message"] == "ignored"
 
 
-def test_telegram_voice_message(client: TestClient, _patch_telegram_send) -> None:
+@patch("app.services.audio_service.transcribe_file", new_callable=AsyncMock)
+@patch("app.services.telegram_service.download_file", new_callable=AsyncMock)
+def test_telegram_voice_message(mock_download, mock_transcribe, client: TestClient, _patch_telegram_send) -> None:
+    mock_download.return_value = b"fake_audio"
+    mock_transcribe.return_value = {"text": "teste voz", "raw_json": None, "error": None}
     payload = _make_payload(7, voice={"file_id": "abc123", "file_unique_id": "xyz", "duration": 5})
     response = client.post("/webhooks/telegram", json=payload, headers=VALID_HEADERS)
     assert response.status_code == 200
-    assert response.json()["message"] == "voice_noted"
-    _patch_telegram_send.assert_called_once()
-    call_args = _patch_telegram_send.call_args
-    assert "áudio" in call_args[0][1].lower() or "voz" in call_args[0][1].lower()
+    assert response.json()["message"] == "voice_processed"
+    _patch_telegram_send.assert_called()
+    call_args = _patch_telegram_send.call_args_list[0]
+    assert "teste voz" in call_args[0][1].lower()
 
 
 def test_telegram_start_command(client: TestClient, _patch_telegram_send) -> None:
@@ -157,16 +161,18 @@ def test_telegram_myday_does_not_call_openai(client: TestClient, _patch_telegram
         mock_gen.assert_not_called()
 
 
-def test_telegram_voice_persists_metadata(client: TestClient, _patch_telegram_send, db_session) -> None:
+@patch("app.services.audio_service.transcribe_file", new_callable=AsyncMock)
+@patch("app.services.telegram_service.download_file", new_callable=AsyncMock)
+def test_telegram_voice_persists_metadata(mock_download, mock_transcribe, client: TestClient, _patch_telegram_send, db_session) -> None:
+    mock_download.return_value = b"fake_audio"
+    mock_transcribe.return_value = {"text": "teste metadata", "raw_json": None, "error": None}
     payload = _make_payload(16, voice={"file_id": "voice123", "file_unique_id": "uniq", "duration": 10, "mime_type": "audio/ogg"})
     response = client.post("/webhooks/telegram", json=payload, headers=VALID_HEADERS)
     assert response.status_code == 200
-    assert response.json()["message"] == "voice_noted"
+    assert response.json()["message"] == "voice_processed"
 
-    from app.models.message import Message
-    msgs = db_session.query(Message).filter(Message.text == "[voice message]").all()
-    assert len(msgs) == 1
-    import json
-    raw = json.loads(msgs[0].raw_json)
-    assert raw["voice"]["file_id"] == "voice123"
-    assert raw["voice"]["duration"] == 10
+    from app.models.voice_message_log import VoiceMessageLog
+    logs = db_session.query(VoiceMessageLog).filter(VoiceMessageLog.telegram_file_id == "voice123").all()
+    assert len(logs) == 1
+    assert logs[0].duration_seconds == 10
+    assert logs[0].transcription_text == "teste metadata"

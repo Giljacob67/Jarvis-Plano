@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     google_oauth_scopes: str = "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/tasks"
     google_encryption_key: str = ""
 
+    openai_transcribe_model: str = "gpt-4o-mini-transcribe"
+    openai_tts_model: str = "gpt-4o-mini-tts"
+    voice_responses_enabled: bool = False
+    voice_response_voice: str = "alloy"
+    max_audio_file_mb: int = 19
+    temp_audio_dir: str = "/tmp/jarvis_audio"
+
     google_gmail_enabled: bool = True
     google_gmail_scopes: str = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose"
     gmail_inbox_query_default: str = "in:inbox newer_than:7d"

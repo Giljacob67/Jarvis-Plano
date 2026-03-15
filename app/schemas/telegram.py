@@ -29,6 +29,16 @@ class TelegramVoice(BaseModel):
     file_size: Optional[int] = None
 
 
+class TelegramAudio(BaseModel):
+    file_id: str
+    file_unique_id: str = ""
+    duration: int = 0
+    mime_type: Optional[str] = None
+    file_size: Optional[int] = None
+    title: Optional[str] = None
+    file_name: Optional[str] = None
+
+
 class TelegramMessage(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -37,6 +47,7 @@ class TelegramMessage(BaseModel):
     from_user: Optional[TelegramUser] = None
     text: Optional[str] = None
     voice: Optional[TelegramVoice] = None
+    audio: Optional[TelegramAudio] = None
 
     @model_validator(mode="before")
     @classmethod
