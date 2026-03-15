@@ -1,0 +1,171 @@
+Fase 2 — Telegram real + OpenAI + memória local
+
+Evolua o projeto existente de forma incremental. Não recrie o scaffold. Não adicione Node, frontend, package.json ou outra stack. Preserve FastAPI, a estrutura modular atual e os endpoints da fase 1.
+
+Objetivo
+Transformar o “Jarvis Pessoal” em um bot funcional no Telegram para 1 usuário, texto-first, com memória local em SQLite e integração real com OpenAI, pronto para depois plugar Google Workspace.
+
+Escopo desta fase
+- integração real de entrada e saída com Telegram para mensagens de texto
+- OpenAIService funcional usando Responses API
+- memória local + histórico de conversa
+- segurança básica + idempotência
+- preparação para voz sem transcrição ainda
+- sem Google real nesta fase
+
+Restrições
+- não quebrar a fase 1
+- sem Docker
+- sem filas externas
+- sem dependências desnecessárias
+- tudo em pt-BR nas respostas do assistente
+- se OPENAI_API_KEY não estiver configurada, responder de forma amigável sem crashar
+
+1) Dependências e config
+- adicionar a dependência oficial `openai`
+- manter `httpx`, `sqlalchemy`, `pydantic-settings`, `pytest`
+- adicionar no `.env.example`:
+  OPENAI_MODEL=gpt-5-mini
+  TELEGRAM_ALLOWED_USER_ID=
+  APP_BASE_URL=
+- manter também:
+  OPENAI_API_KEY=
+  TELEGRAM_BOT_TOKEN=
+  TELEGRAM_WEBHOOK_SECRET=
+  DATABASE_URL=
+  APP_ENV=
+  TIMEZONE=America/Sao_Paulo
+
+2) Modelos/tabelas
+Criar tabelas SQLAlchemy para:
+- User
+- ProcessedTelegramUpdate
+  - update_id único
+  - user_id
+  - created_at
+- Conversation
+- Message
+  - conversation_id
+  - role (user, assistant, tool, system)
+  - channel
+  - text
+  - raw_json nullable
+  - created_at
+- MemoryItem
+  - user_id
+  - category
+  - content
+  - source
+  - is_active
+  - created_at
+- ActionLog
+  - event_type
+  - status
+  - details_json
+  - created_at
+
+3) Telegram real
+Evoluir `TelegramService` para:
+- validar o header `X-Telegram-Bot-Api-Secret-Token`
+- ignorar com HTTP 200 qualquer mensagem cujo user_id seja diferente de `TELEGRAM_ALLOWED_USER_ID`
+- tratar `update_id` como idempotency key e ignorar updates duplicados com HTTP 200
+- enviar respostas reais usando a Bot API `sendMessage`
+- não logar tokens nem segredos
+
+Implementar estes comportamentos:
+- `/start` -> mensagem curta apresentando o assistente
+- `/help` -> listar comandos disponíveis
+- `/myday` -> responder usando a lógica mock atual do endpoint `/me/day`
+- `/remember <texto>` -> salvar uma memória simples
+- `/memories` -> listar as últimas memórias ativas
+- texto livre -> chamar OpenAIService e responder no Telegram
+
+4) OpenAIService funcional
+Implementar `OpenAIService` com o client oficial da OpenAI usando a Responses API.
+
+Criar um método principal parecido com:
+`generate_reply(user_id: str, user_text: str, recent_messages: list, memories: list) -> str`
+
+Requisitos do OpenAIService:
+- usar `OPENAI_MODEL` do ambiente
+- criar um system prompt fixo em pt-BR focado em produtividade pessoal
+- usar poucas tools internas por function calling:
+  - `get_my_day()`
+  - `save_memory(note, category)`
+  - `list_memories(limit)`
+- `get_my_day()` deve reutilizar a lógica existente do `/me/day`
+- limitar o contexto enviado ao modelo às mensagens recentes + memórias relevantes
+- se o usuário pedir ação sensível nesta fase (ex.: enviar e-mail, apagar algo, cancelar evento, editar agenda real), não executar nada; responder que essa ação será habilitada numa fase com aprovação explícita e registrar isso no `ActionLog`
+- se a OpenAI estiver sem configuração, retornar mensagem amigável tipo “a integração com OpenAI ainda não foi configurada”
+
+5) Memória
+Implementar memória simples e útil:
+- comando `/remember <texto>` salva memória com category=`general`
+- tool `save_memory` também salva memória
+- tool `list_memories` retorna memórias recentes
+- criar helpers para recuperar memórias relevantes por texto simples
+- sem vetor database nesta fase
+- sem embeddings nesta fase
+
+6) Voz / áudio
+Nesta fase, não implementar transcrição ainda.
+Mas:
+- se chegar `voice`, salvar metadados básicos disponíveis no update
+- registrar em log que o pipeline de transcrição será fase 3
+- responder ao usuário com uma mensagem curta dizendo que áudio já foi reconhecido, mas a transcrição por voz entra na próxima fase
+- deixar TODOs claros no código para:
+  - obter arquivo do Telegram
+  - baixar áudio
+  - transcrever com OpenAI
+  - opcionalmente responder com TTS depois
+
+7) Organização do código
+Manter a arquitetura modular.
+Se ajudar, crie:
+- `app/services/assistant_service.py`
+- `app/services/memory_service.py`
+- `app/services/telegram_service.py`
+- `app/prompts.py` ou arquivo equivalente para centralizar o system prompt
+- `scripts/set_telegram_webhook.py`
+- `scripts/get_telegram_webhook_info.py`
+
+8) Testes
+Adicionar testes para:
+- `/health`
+- `/me/day`
+- webhook Telegram com secret válido
+- webhook Telegram com secret inválido -> 403
+- webhook com usuário não autorizado -> 200 com ignored
+- webhook com update duplicado -> 200 com ignored
+- `/remember` salvando memória
+- texto livre chamando OpenAIService mockado
+- `/myday` funcionando sem depender da OpenAI
+
+9) README
+Atualizar o README com:
+- novos Secrets necessários
+- como rodar no Replit
+- como definir `APP_BASE_URL`
+- como configurar o webhook do Telegram
+- como testar `/start`, `/help`, `/myday`, `/remember`, `/memories`
+- observação de que Google ainda não está ativo nesta fase
+- observação de que voz/transcrição entra na fase seguinte
+
+10) Critério de pronto
+Considere concluído quando:
+- uma mensagem de texto enviada no Telegram pelo usuário permitido entra pelo webhook
+- o update é validado e salvo
+- o bot responde de volta no Telegram de forma real
+- `/myday`, `/remember` e `/memories` funcionam
+- updates duplicados são ignorados
+- mensagens de usuários não permitidos são ignoradas sem erro
+- voz fica preparada, sem quebrar o fluxo
+- testes passam
+
+No final:
+1. rode a app
+2. rode os testes
+3. me mostre a árvore de arquivos alterados/criados
+4. liste os novos Secrets
+5. mostre exatamente como configurar o webhook do Telegram para este projeto
+6. preserve tudo que já ficou correto na fase 1 e evolua em cima disso
