@@ -28,6 +28,9 @@ from app.services import google_calendar as google_calendar_service
 from app.services import google_tasks as google_tasks_service
 from app.services import google_gmail_service
 from app.services import audio_service
+from app.services import approval_service
+from app.services import proactive_service
+from app.services import workflow_service
 from app.utils.date_utils import parse_datetime_local
 from app.utils.gmail_utils import format_messages_list_telegram
 
@@ -38,6 +41,8 @@ router = APIRouter()
 HELP_TEXT = (
     "Comandos disponíveis:\n"
     "/myday — resumo do dia\n"
+    "/briefing — briefing matinal\n"
+    "/review — fechamento do dia\n"
     "/remember <texto> — salvar uma anotação\n"
     "/memories — listar anotações recentes\n"
     "/connectgoogle — conectar conta Google\n"
@@ -53,6 +58,17 @@ HELP_TEXT = (
     "/replydraft <message_id> | <corpo> — responder e-mail (rascunho)\n"
     "/senddraft <draft_id> — enviar rascunho\n"
     "/inboxsummary — resumo da inbox\n"
+    "/approvals — ver aprovações pendentes\n"
+    "/approve <id> — aprovar uma ação\n"
+    "/reject <id> — rejeitar uma ação\n"
+    "/playbooks — ver workflows disponíveis\n"
+    "/runworkflow <nome> [| params] — executar workflow\n"
+    "/routineon <tipo> — ativar rotina\n"
+    "/routineoff <tipo> — desativar rotina\n"
+    "/routinestatus — status das rotinas\n"
+    "/quieton — ativar quiet hours\n"
+    "/quietoff — desativar quiet hours\n"
+    "/quietstatus — status do quiet hours\n"
     "/voiceon — ativar respostas por áudio\n"
     "/voiceoff — desativar respostas por áudio\n"
     "/voicestatus — status das respostas por áudio\n"
@@ -253,6 +269,48 @@ def _ext_from_mime(mime_type: str) -> str:
     return mime_map.get(mime_type, ".ogg")
 
 
+def _get_routine_status(db: Session, user_id: str) -> str:
+    from app.models.routine_config import RoutineConfig
+    configs = db.query(RoutineConfig).filter(RoutineConfig.user_id == user_id).all()
+    config_map = {c.routine_type: c.is_enabled for c in configs}
+
+    morning = config_map.get("morning", settings.morning_briefing_enabled)
+    evening = config_map.get("evening", settings.evening_review_enabled)
+    reminders = config_map.get("reminders", True)
+
+    lines = [
+        "⚙️ *Status das rotinas:*",
+        f"  ☀️ Briefing matinal: {'✅ ativo' if morning else '❌ desativado'} ({settings.morning_briefing_time})",
+        f"  🌙 Fechamento do dia: {'✅ ativo' if evening else '❌ desativado'} ({settings.evening_review_time})",
+        f"  🔔 Lembretes: {'✅ ativo' if reminders else '❌ desativado'}",
+        f"  🤖 Proativo global: {'✅' if settings.proactive_features_enabled else '❌'}",
+    ]
+    return "\n".join(lines)
+
+
+def _set_routine(db: Session, user_id: str, routine_type: str, enabled: bool) -> str:
+    from app.models.routine_config import RoutineConfig
+    config = db.query(RoutineConfig).filter(
+        RoutineConfig.user_id == user_id,
+        RoutineConfig.routine_type == routine_type,
+    ).first()
+    if config:
+        config.is_enabled = enabled
+    else:
+        config = RoutineConfig(
+            user_id=user_id,
+            routine_type=routine_type,
+            is_enabled=enabled,
+        )
+        db.add(config)
+    db.commit()
+
+    status = "ativada" if enabled else "desativada"
+    labels = {"morning": "☀️ Briefing matinal", "evening": "🌙 Fechamento do dia", "reminders": "🔔 Lembretes"}
+    label = labels.get(routine_type, routine_type)
+    return f"✅ Rotina {label} {status}."
+
+
 @router.post("/telegram", response_model=TelegramWebhookResponse)
 async def telegram_webhook(
     request: Request,
@@ -297,16 +355,10 @@ async def telegram_webhook(
 
     if msg.voice:
         reply = await _handle_voice_message(
-            db=db,
-            user_id=user_id,
-            chat_id=chat_id,
-            update_id=update.update_id,
-            file_id=msg.voice.file_id,
-            file_unique_id=msg.voice.file_unique_id,
-            mime_type=msg.voice.mime_type,
-            duration=msg.voice.duration,
-            file_size=msg.voice.file_size,
-            source_type="voice",
+            db=db, user_id=user_id, chat_id=chat_id, update_id=update.update_id,
+            file_id=msg.voice.file_id, file_unique_id=msg.voice.file_unique_id,
+            mime_type=msg.voice.mime_type, duration=msg.voice.duration,
+            file_size=msg.voice.file_size, source_type="voice",
         )
         if reply:
             await telegram_service.send_message(chat_id, reply)
@@ -314,16 +366,10 @@ async def telegram_webhook(
 
     if msg.audio:
         reply = await _handle_voice_message(
-            db=db,
-            user_id=user_id,
-            chat_id=chat_id,
-            update_id=update.update_id,
-            file_id=msg.audio.file_id,
-            file_unique_id=msg.audio.file_unique_id,
-            mime_type=msg.audio.mime_type,
-            duration=msg.audio.duration,
-            file_size=msg.audio.file_size,
-            source_type="audio",
+            db=db, user_id=user_id, chat_id=chat_id, update_id=update.update_id,
+            file_id=msg.audio.file_id, file_unique_id=msg.audio.file_unique_id,
+            mime_type=msg.audio.mime_type, duration=msg.audio.duration,
+            file_size=msg.audio.file_size, source_type="audio",
         )
         if reply:
             await telegram_service.send_message(chat_id, reply)
@@ -333,45 +379,92 @@ async def telegram_webhook(
     if not text:
         return TelegramWebhookResponse(ok=True, message="ignored")
 
-    reply_text = ""
+    reply_text = await _route_command(db, user_id, chat_id, text, body)
 
+    if reply_text:
+        await telegram_service.send_message(chat_id, reply_text)
+
+    return TelegramWebhookResponse(ok=True, message="processed")
+
+
+async def _route_command(db: Session, user_id: str, chat_id: int, text: str, body: dict) -> str:
     if text.startswith("/start"):
-        reply_text = START_TEXT
-    elif text.startswith("/help"):
-        reply_text = HELP_TEXT
-    elif text.startswith("/myday"):
-        overview = await get_real_or_mock_day_overview(db, user_id)
-        reply_text = format_day_overview_text(overview)
-    elif text.startswith("/remember"):
+        return START_TEXT
+    if text.startswith("/help"):
+        return HELP_TEXT
+
+    if text.startswith("/myday"):
+        return await _cmd_myday(db, user_id)
+    if text.startswith("/briefing"):
+        return await _cmd_briefing(db, user_id)
+    if text.startswith("/review"):
+        return await _cmd_review(db, user_id)
+
+    if text.startswith("/remember"):
         note = text[len("/remember"):].strip()
         if not note:
-            reply_text = "Use: /remember <sua anotação aqui>"
-        else:
-            save_memory(db, user_id, note, category="general", source="command")
-            reply_text = f"✅ Anotação salva: \"{note}\""
-    elif text.startswith("/memories"):
+            return "Use: /remember <sua anotação aqui>"
+        save_memory(db, user_id, note, category="general", source="command")
+        return f'✅ Anotação salva: "{note}"'
+    if text.startswith("/memories"):
         items = list_memories(db, user_id, limit=10)
         if not items:
-            reply_text = "Você ainda não tem anotações salvas. Use /remember para salvar uma."
-        else:
-            lines = ["📝 Suas anotações recentes:"]
-            for i, m in enumerate(items, 1):
-                lines.append(f"{i}. [{m.category}] {m.content}")
-            reply_text = "\n".join(lines)
-    elif text.startswith("/voiceon"):
+            return "Você ainda não tem anotações salvas. Use /remember para salvar uma."
+        lines = ["📝 Suas anotações recentes:"]
+        for i, m in enumerate(items, 1):
+            lines.append(f"{i}. [{m.category}] {m.content}")
+        return "\n".join(lines)
+
+    if text.startswith("/approvals"):
+        return _cmd_approvals(db, user_id)
+    if text.startswith("/approve"):
+        return await _cmd_approve(db, user_id, text)
+    if text.startswith("/reject"):
+        return _cmd_reject(db, user_id, text)
+
+    if text.startswith("/playbooks"):
+        return workflow_service.list_playbooks()
+    if text.startswith("/runworkflow"):
+        return await _cmd_runworkflow(db, user_id, text)
+
+    if text.startswith("/routineon"):
+        return _cmd_routine_toggle(db, user_id, text, True)
+    if text.startswith("/routineoff"):
+        return _cmd_routine_toggle(db, user_id, text, False)
+    if text.startswith("/routinestatus"):
+        return _get_routine_status(db, user_id)
+
+    if text.startswith("/quieton"):
+        proactive_service.set_quiet_hours_preference(db, user_id, True)
+        return "🌙 Quiet hours ativadas. Sem mensagens proativas entre " + settings.quiet_hours_start + " e " + settings.quiet_hours_end + "."
+    if text.startswith("/quietoff"):
+        proactive_service.set_quiet_hours_preference(db, user_id, False)
+        return "🔔 Quiet hours desativadas. Mensagens proativas podem chegar a qualquer hora."
+    if text.startswith("/quietstatus"):
+        enabled = proactive_service.get_quiet_hours_preference(db, user_id)
+        global_enabled = settings.quiet_hours_enabled
+        active = global_enabled and enabled
+        lines = [
+            "🌙 *Status do Quiet Hours:*",
+            f"  Global: {'✅' if global_enabled else '❌'} ({settings.quiet_hours_start}–{settings.quiet_hours_end})",
+            f"  Sua preferência: {'✅ ativo' if enabled else '❌ desativado'}",
+            f"  Resultado: {'🌙 quiet hours ativas' if active else '🔔 mensagens a qualquer hora'}",
+        ]
+        return "\n".join(lines)
+
+    if text.startswith("/voiceon"):
         audio_service.set_voice_preference(db, user_id, True)
         if settings.voice_responses_enabled:
-            reply_text = "🔊 Respostas por áudio ativadas! Agora vou responder também com áudio quando você enviar mensagens."
-        else:
-            reply_text = (
-                "🔊 Preferência de áudio ativada para sua conta.\n"
-                "⚠️ Porém, as respostas por áudio estão desativadas globalmente (VOICE_RESPONSES_ENABLED=false). "
-                "Peça ao administrador para ativar."
-            )
-    elif text.startswith("/voiceoff"):
+            return "🔊 Respostas por áudio ativadas! Agora vou responder também com áudio quando você enviar mensagens."
+        return (
+            "🔊 Preferência de áudio ativada para sua conta.\n"
+            "⚠️ Porém, as respostas por áudio estão desativadas globalmente (VOICE_RESPONSES_ENABLED=false). "
+            "Peça ao administrador para ativar."
+        )
+    if text.startswith("/voiceoff"):
         audio_service.set_voice_preference(db, user_id, False)
-        reply_text = "🔇 Respostas por áudio desativadas. Vou responder apenas em texto."
-    elif text.startswith("/voicestatus"):
+        return "🔇 Respostas por áudio desativadas. Vou responder apenas em texto."
+    if text.startswith("/voicestatus"):
         global_enabled = settings.voice_responses_enabled
         user_enabled = audio_service.get_voice_preference(db, user_id)
         active = global_enabled and user_enabled
@@ -381,251 +474,362 @@ async def telegram_webhook(
             f"  Sua preferência: {'✅ ativado' if user_enabled else '❌ desativado'}",
             f"  Resultado: {'🔊 áudio ativo' if active else '🔇 apenas texto'}",
         ]
-        reply_text = "\n".join(lines)
-    elif text.startswith("/transcribe"):
-        reply_text = (
+        return "\n".join(lines)
+    if text.startswith("/transcribe"):
+        return (
             "🎤 Para transcrever áudio, basta enviar uma nota de voz ou arquivo de áudio diretamente neste chat. "
             "O Jarvis transcreverá automaticamente e responderá."
         )
-    elif text.startswith("/connectgoogle"):
-        if not settings.app_base_url:
-            reply_text = "⚠️ APP_BASE_URL não está configurado. Peça ao administrador para definir."
-        elif not settings.google_client_id:
-            reply_text = "⚠️ Credenciais Google OAuth não configuradas. Peça ao administrador."
-        else:
-            auth_link = f"{settings.app_base_url.rstrip('/')}/auth/google/start"
-            status = google_oauth_service.get_status(db, user_id)
-            if status.get("connected") and not status.get("gmail_enabled"):
-                reply_text = (
-                    "⚠️ Sua conta Google está conectada, mas sem permissões de Gmail.\n"
-                    "Ao clicar no link abaixo, você será redirecionado para autorizar os escopos adicionais de Gmail.\n"
-                    "Seus acessos anteriores (Calendar, Tasks) serão mantidos.\n\n"
-                    f"🔗 [Reconectar com Gmail]({auth_link})"
-                )
-            else:
-                reply_text = f"🔗 [Clique aqui para conectar sua conta Google]({auth_link})"
-    elif text.startswith("/google"):
-        status = google_oauth_service.get_status(db, user_id)
-        if status.get("connected"):
-            gmail_str = "✅" if status.get("gmail_enabled") else "❌"
-            cal_str = "✅" if status.get("calendar_enabled") else "❌"
-            tasks_str = "✅" if status.get("tasks_enabled") else "❌"
-            reply_text = (
-                "✅ Conta Google conectada!\n"
-                f"Calendar: {cal_str} | Tasks: {tasks_str} | Gmail: {gmail_str}\n"
-                f"Validade do token: {status.get('token_expiry', 'N/A')}"
-            )
-            if not status.get("gmail_enabled"):
-                reply_text += "\n\n⚠️ Gmail não autorizado. Use /connectgoogle para reconectar com escopos de Gmail."
-        else:
-            reply_text = "❌ Conta Google não conectada. Use /connectgoogle para conectar."
-    elif text.startswith("/tasks"):
-        status = google_oauth_service.get_status(db, user_id)
-        if not status.get("connected"):
-            reply_text = "❌ Google não conectado. Use /connectgoogle para conectar sua conta primeiro."
-        else:
-            tasks = await google_tasks_service.list_tasks(db, user_id, limit=15)
-            if not tasks:
-                reply_text = "✅ Nenhuma tarefa pendente!"
-            else:
-                lines = ["📋 Suas tarefas pendentes:"]
-                for i, t in enumerate(tasks, 1):
-                    due_str = f" (vence: {t['due'][:10]})" if t.get("due") else ""
-                    lines.append(f"{i}. {t['title']}{due_str}")
-                reply_text = "\n".join(lines)
-    elif text.startswith("/newtask"):
-        title = text[len("/newtask"):].strip()
-        if not title:
-            reply_text = "Use: /newtask <título da tarefa>"
-        else:
-            status = google_oauth_service.get_status(db, user_id)
-            if not status.get("connected"):
-                reply_text = "❌ Google não conectado. Use /connectgoogle para conectar sua conta primeiro."
-            else:
-                result = await google_tasks_service.create_task(db, user_id, title)
-                if "error" in result:
-                    reply_text = f"❌ {result['error']}"
-                else:
-                    reply_text = f"✅ Tarefa criada: \"{result.get('title', title)}\""
-    elif text.startswith("/newevent"):
-        parts_raw = text[len("/newevent"):].strip()
-        parts = [p.strip() for p in parts_raw.split("|")]
-        if len(parts) < 3:
-            reply_text = (
-                "Use: /newevent título | início | fim\n"
-                "Formato de data: YYYY-MM-DD HH:MM\n"
-                "Exemplo: /newevent Reunião | 2026-03-16 09:00 | 2026-03-16 10:00"
-            )
-        else:
-            ev_title = parts[0]
-            status = google_oauth_service.get_status(db, user_id)
-            if not status.get("connected"):
-                reply_text = "❌ Google não conectado. Use /connectgoogle para conectar sua conta primeiro."
-            else:
-                try:
-                    start_dt = parse_datetime_local(parts[1], settings.timezone)
-                    end_dt = parse_datetime_local(parts[2], settings.timezone)
-                except ValueError as e:
-                    reply_text = f"❌ {e}"
-                else:
-                    result = await google_calendar_service.create_event(
-                        db, user_id, ev_title, start_dt, end_dt, tz=settings.timezone
-                    )
-                    if "error" in result:
-                        reply_text = f"❌ {result['error']}"
-                    else:
-                        reply_text = f"✅ Evento criado: \"{result.get('title', ev_title)}\""
-                        if result.get("link"):
-                            reply_text += f"\n🔗 {result['link']}"
-    elif text.startswith("/inboxsummary"):
-        gmail_err = _gmail_not_ready_msg(db, user_id)
-        if gmail_err:
-            reply_text = gmail_err
-        else:
-            result = await google_gmail_service.summarize_inbox(db, user_id)
-            if "error" in result:
-                reply_text = f"❌ {result['error']}"
-            else:
-                reply_text = result.get("summary", "Não foi possível gerar o resumo.")
-    elif text.startswith("/inbox"):
-        gmail_err = _gmail_not_ready_msg(db, user_id)
-        if gmail_err:
-            reply_text = gmail_err
-        else:
-            result = await google_gmail_service.list_messages(db, user_id)
-            if "error" in result:
-                reply_text = f"❌ {result['error']}"
-            else:
-                reply_text = format_messages_list_telegram(result.get("messages", []))
-    elif text.startswith("/emailsearch"):
-        query = text[len("/emailsearch"):].strip()
-        if not query:
-            reply_text = (
-                "Use: /emailsearch <consulta>\n"
-                "Exemplos:\n"
-                "  /emailsearch from:joao@email.com\n"
-                "  /emailsearch is:unread subject:relatório\n"
-                "  /emailsearch newer_than:3d"
-            )
-        else:
-            gmail_err = _gmail_not_ready_msg(db, user_id)
-            if gmail_err:
-                reply_text = gmail_err
-            else:
-                result = await google_gmail_service.search_emails(db, user_id, query=query)
-                if "error" in result:
-                    reply_text = f"❌ {result['error']}"
-                else:
-                    reply_text = format_messages_list_telegram(result.get("messages", []))
-    elif text.startswith("/thread"):
-        thread_id = text[len("/thread"):].strip()
-        if not thread_id:
-            reply_text = "Use: /thread <thread_id>"
-        else:
-            gmail_err = _gmail_not_ready_msg(db, user_id)
-            if gmail_err:
-                reply_text = gmail_err
-            else:
-                result = await google_gmail_service.get_thread(db, user_id, thread_id=thread_id)
-                if "error" in result:
-                    reply_text = f"❌ {result['error']}"
-                else:
-                    msgs = result.get("messages", [])
-                    if not msgs:
-                        reply_text = "Nenhuma mensagem nesta thread."
-                    else:
-                        lines = [f"📧 Thread ({len(msgs)} mensagens):"]
-                        for i, m in enumerate(msgs, 1):
-                            sender = m.get("from", "?")
-                            if "<" in sender:
-                                sender = sender.split("<")[0].strip().strip('"')
-                            subject = m.get("subject", "(sem assunto)")
-                            body_preview = m.get("body", "")[:200]
-                            lines.append(f"\n--- Mensagem {i} ---")
-                            lines.append(f"De: {sender}")
-                            lines.append(f"Assunto: {subject}")
-                            if body_preview:
-                                lines.append(f"{body_preview}")
-                        reply_text = "\n".join(lines)
-    elif text.startswith("/draftemail"):
-        parts_raw = text[len("/draftemail"):].strip()
-        parts = [p.strip() for p in parts_raw.split("|")]
-        if len(parts) < 3:
-            reply_text = (
-                "Use: /draftemail destinatário | assunto | corpo\n"
-                "Exemplo: /draftemail joao@email.com | Reunião amanhã | Olá João, podemos..."
-            )
-        else:
-            gmail_err = _gmail_not_ready_msg(db, user_id)
-            if gmail_err:
-                reply_text = gmail_err
-            else:
-                to_addr = parts[0]
-                subject = parts[1]
-                body = parts[2]
-                result = await google_gmail_service.create_draft(db, user_id, to=to_addr, subject=subject, body=body)
-                if "error" in result:
-                    reply_text = f"❌ {result['error']}"
-                else:
-                    reply_text = result.get("message", "Rascunho criado.")
-    elif text.startswith("/replydraft"):
-        parts_raw = text[len("/replydraft"):].strip()
-        parts = [p.strip() for p in parts_raw.split("|", 1)]
-        if len(parts) < 2 or not parts[0] or not parts[1]:
-            reply_text = (
-                "Use: /replydraft <message_id> | <corpo da resposta>\n"
-                "Exemplo: /replydraft 18abc123def | Obrigado, confirmo presença!"
-            )
-        else:
-            gmail_err = _gmail_not_ready_msg(db, user_id)
-            if gmail_err:
-                reply_text = gmail_err
-            else:
-                msg_id = parts[0]
-                body = parts[1]
-                result = await google_gmail_service.create_reply_draft(db, user_id, message_id=msg_id, body=body)
-                if "error" in result:
-                    reply_text = f"❌ {result['error']}"
-                else:
-                    reply_text = result.get("message", "Rascunho de resposta criado.")
-    elif text.startswith("/senddraft"):
-        draft_id = text[len("/senddraft"):].strip()
-        if not draft_id:
-            reply_text = "Use: /senddraft <draft_id>"
-        else:
-            gmail_err = _gmail_not_ready_msg(db, user_id)
-            if gmail_err:
-                reply_text = gmail_err
-            else:
-                result = await google_gmail_service.send_draft(db, user_id, draft_id=draft_id)
-                if "error" in result:
-                    reply_text = f"❌ {result['error']}"
-                else:
-                    reply_text = result.get("message", "E-mail enviado!")
-    elif text.startswith("/drafts"):
-        gmail_err = _gmail_not_ready_msg(db, user_id)
-        if gmail_err:
-            reply_text = gmail_err
-        else:
-            result = await google_gmail_service.list_drafts(db, user_id)
-            if "error" in result:
-                reply_text = f"❌ {result['error']}"
-            else:
-                drafts = result.get("drafts", [])
-                if not drafts:
-                    reply_text = "📝 Nenhum rascunho encontrado."
-                else:
-                    lines = ["📝 Seus rascunhos:"]
-                    for i, d in enumerate(drafts, 1):
-                        to_str = d.get("to", "?")
-                        subj = d.get("subject", "(sem assunto)")
-                        did = d.get("draft_id", "")
-                        lines.append(f"{i}. Para: {to_str} — {subj}\n   ID: {did}")
-                    reply_text = "\n".join(lines)
-    else:
-        reply_text = await handle_free_text(db, user_id, text, raw_update=body)
 
-    if reply_text:
-        await telegram_service.send_message(chat_id, reply_text)
+    if text.startswith("/connectgoogle"):
+        return _cmd_connectgoogle(db, user_id)
+    if text.startswith("/google"):
+        return _cmd_google_status(db, user_id)
 
-    return TelegramWebhookResponse(ok=True, message="processed")
+    if text.startswith("/tasks"):
+        return await _cmd_tasks(db, user_id)
+    if text.startswith("/newtask"):
+        return await _cmd_newtask(db, user_id, text)
+    if text.startswith("/newevent"):
+        return await _cmd_newevent(db, user_id, text)
+
+    if text.startswith("/inboxsummary"):
+        return await _cmd_inboxsummary(db, user_id)
+    if text.startswith("/inbox"):
+        return await _cmd_inbox(db, user_id)
+    if text.startswith("/emailsearch"):
+        return await _cmd_emailsearch(db, user_id, text)
+    if text.startswith("/thread"):
+        return await _cmd_thread(db, user_id, text)
+    if text.startswith("/draftemail"):
+        return await _cmd_draftemail(db, user_id, text)
+    if text.startswith("/replydraft"):
+        return await _cmd_replydraft(db, user_id, text)
+    if text.startswith("/senddraft"):
+        return await _cmd_senddraft(db, user_id, text)
+    if text.startswith("/drafts"):
+        return await _cmd_drafts(db, user_id)
+
+    return await handle_free_text(db, user_id, text, raw_update=body)
+
+
+async def _cmd_myday(db: Session, user_id: str) -> str:
+    overview = await get_real_or_mock_day_overview(db, user_id)
+    base_text = format_day_overview_text(overview)
+
+    extras = []
+    pending = approval_service.list_pending_approvals(db, user_id)
+    if pending:
+        extras.append(f"\n⏳ *{len(pending)} aprovação(ões) pendente(s)* — use /approvals")
+
+    suggestions = await proactive_service.get_proactive_suggestions(db, user_id)
+    if suggestions.get("suggestions"):
+        extras.append("\n💡 *Alertas:*")
+        for s in suggestions["suggestions"][:5]:
+            extras.append(f"  {s}")
+
+    from app.services.memory_service import get_memories_by_context
+    followups = get_memories_by_context(db, user_id, ["followup"], limit=3)
+    if followups:
+        extras.append("\n📌 *Follow-ups:*")
+        for m in followups:
+            extras.append(f"  • {m.content[:80]}")
+
+    if extras:
+        base_text += "\n".join(extras)
+    return base_text
+
+
+async def _cmd_briefing(db: Session, user_id: str) -> str:
+    return await proactive_service.generate_morning_briefing(db, user_id)
+
+
+async def _cmd_review(db: Session, user_id: str) -> str:
+    return await proactive_service.generate_evening_review(db, user_id)
+
+
+def _cmd_approvals(db: Session, user_id: str) -> str:
+    pending = approval_service.list_pending_approvals(db, user_id)
+    if not pending:
+        return "✅ Nenhuma aprovação pendente."
+    lines = [f"⏳ *{len(pending)} aprovação(ões) pendente(s):*\n"]
+    for a in pending:
+        lines.append(f"*#{a.id}* — {a.title}")
+        lines.append(f"  Tipo: {a.action_type}")
+        lines.append(f"  {a.summary[:100]}")
+        lines.append(f"  /approve {a.id} | /reject {a.id}\n")
+    return "\n".join(lines)
+
+
+async def _cmd_approve(db: Session, user_id: str, text: str) -> str:
+    id_str = text[len("/approve"):].strip()
+    if not id_str or not id_str.isdigit():
+        return "Use: /approve <id>"
+    approval_id = int(id_str)
+    result = approval_service.approve_pending_approval(db, user_id, approval_id)
+    if "error" in result:
+        return f"❌ {result['error']}"
+    if result.get("status") == "already_approved":
+        return result["message"]
+
+    exec_result = await approval_service.execute_approved_action(db, user_id, approval_id)
+    if "error" in exec_result:
+        return f"✅ Aprovação #{approval_id} aprovada.\n⚠️ Execução: {exec_result['error']}"
+    if exec_result.get("status") == "already_executed":
+        return f"✅ Aprovação #{approval_id} — já executada anteriormente."
+    return f"✅ Aprovação #{approval_id} aprovada e executada com sucesso!"
+
+
+def _cmd_reject(db: Session, user_id: str, text: str) -> str:
+    id_str = text[len("/reject"):].strip()
+    if not id_str or not id_str.isdigit():
+        return "Use: /reject <id>"
+    approval_id = int(id_str)
+    result = approval_service.reject_pending_approval(db, user_id, approval_id)
+    if "error" in result:
+        return f"❌ {result['error']}"
+    if result.get("status") == "already_rejected":
+        return result["message"]
+    return f"❌ Aprovação #{approval_id} rejeitada."
+
+
+async def _cmd_runworkflow(db: Session, user_id: str, text: str) -> str:
+    raw = text[len("/runworkflow"):].strip()
+    if not raw:
+        return workflow_service.list_playbooks()
+    parts = [p.strip() for p in raw.split("|")]
+    name = parts[0]
+    params = parts[1:] if len(parts) > 1 else []
+    return await workflow_service.run_workflow(db, user_id, name, params)
+
+
+def _cmd_routine_toggle(db: Session, user_id: str, text: str, enabled: bool) -> str:
+    cmd = "/routineon" if enabled else "/routineoff"
+    routine_type = text[len(cmd):].strip().lower()
+    valid = ["morning", "evening", "reminders"]
+    if routine_type not in valid:
+        return f"Use: {cmd} <{'|'.join(valid)}>"
+    return _set_routine(db, user_id, routine_type, enabled)
+
+
+def _cmd_connectgoogle(db: Session, user_id: str) -> str:
+    if not settings.app_base_url:
+        return "⚠️ APP_BASE_URL não está configurado. Peça ao administrador para definir."
+    if not settings.google_client_id:
+        return "⚠️ Credenciais Google OAuth não configuradas. Peça ao administrador."
+    auth_link = f"{settings.app_base_url.rstrip('/')}/auth/google/start"
+    status = google_oauth_service.get_status(db, user_id)
+    if status.get("connected") and not status.get("gmail_enabled"):
+        return (
+            "⚠️ Sua conta Google está conectada, mas sem permissões de Gmail.\n"
+            "Ao clicar no link abaixo, você será redirecionado para autorizar os escopos adicionais de Gmail.\n"
+            "Seus acessos anteriores (Calendar, Tasks) serão mantidos.\n\n"
+            f"🔗 [Reconectar com Gmail]({auth_link})"
+        )
+    return f"🔗 [Clique aqui para conectar sua conta Google]({auth_link})"
+
+
+def _cmd_google_status(db: Session, user_id: str) -> str:
+    status = google_oauth_service.get_status(db, user_id)
+    if status.get("connected"):
+        gmail_str = "✅" if status.get("gmail_enabled") else "❌"
+        cal_str = "✅" if status.get("calendar_enabled") else "❌"
+        tasks_str = "✅" if status.get("tasks_enabled") else "❌"
+        reply = (
+            "✅ Conta Google conectada!\n"
+            f"Calendar: {cal_str} | Tasks: {tasks_str} | Gmail: {gmail_str}\n"
+            f"Validade do token: {status.get('token_expiry', 'N/A')}"
+        )
+        if not status.get("gmail_enabled"):
+            reply += "\n\n⚠️ Gmail não autorizado. Use /connectgoogle para reconectar com escopos de Gmail."
+        return reply
+    return "❌ Conta Google não conectada. Use /connectgoogle para conectar."
+
+
+async def _cmd_tasks(db: Session, user_id: str) -> str:
+    status = google_oauth_service.get_status(db, user_id)
+    if not status.get("connected"):
+        return "❌ Google não conectado. Use /connectgoogle para conectar sua conta primeiro."
+    tasks = await google_tasks_service.list_tasks(db, user_id, limit=15)
+    if not tasks:
+        return "✅ Nenhuma tarefa pendente!"
+    lines = ["📋 Suas tarefas pendentes:"]
+    for i, t in enumerate(tasks, 1):
+        due_str = f" (vence: {t['due'][:10]})" if t.get("due") else ""
+        lines.append(f"{i}. {t['title']}{due_str}")
+    return "\n".join(lines)
+
+
+async def _cmd_newtask(db: Session, user_id: str, text: str) -> str:
+    title = text[len("/newtask"):].strip()
+    if not title:
+        return "Use: /newtask <título da tarefa>"
+    status = google_oauth_service.get_status(db, user_id)
+    if not status.get("connected"):
+        return "❌ Google não conectado. Use /connectgoogle para conectar sua conta primeiro."
+    result = await google_tasks_service.create_task(db, user_id, title)
+    if "error" in result:
+        return f"❌ {result['error']}"
+    return f'✅ Tarefa criada: "{result.get("title", title)}"'
+
+
+async def _cmd_newevent(db: Session, user_id: str, text: str) -> str:
+    parts_raw = text[len("/newevent"):].strip()
+    parts = [p.strip() for p in parts_raw.split("|")]
+    if len(parts) < 3:
+        return (
+            "Use: /newevent título | início | fim\n"
+            "Formato de data: YYYY-MM-DD HH:MM\n"
+            "Exemplo: /newevent Reunião | 2026-03-16 09:00 | 2026-03-16 10:00"
+        )
+    ev_title = parts[0]
+    status = google_oauth_service.get_status(db, user_id)
+    if not status.get("connected"):
+        return "❌ Google não conectado. Use /connectgoogle para conectar sua conta primeiro."
+    try:
+        start_dt = parse_datetime_local(parts[1], settings.timezone)
+        end_dt = parse_datetime_local(parts[2], settings.timezone)
+    except ValueError as e:
+        return f"❌ {e}"
+    result = await google_calendar_service.create_event(
+        db, user_id, ev_title, start_dt, end_dt, tz=settings.timezone
+    )
+    if "error" in result:
+        return f"❌ {result['error']}"
+    reply = f'✅ Evento criado: "{result.get("title", ev_title)}"'
+    if result.get("link"):
+        reply += f"\n🔗 {result['link']}"
+    return reply
+
+
+async def _cmd_inboxsummary(db: Session, user_id: str) -> str:
+    gmail_err = _gmail_not_ready_msg(db, user_id)
+    if gmail_err:
+        return gmail_err
+    result = await google_gmail_service.summarize_inbox(db, user_id)
+    if "error" in result:
+        return f"❌ {result['error']}"
+    return result.get("summary", "Não foi possível gerar o resumo.")
+
+
+async def _cmd_inbox(db: Session, user_id: str) -> str:
+    gmail_err = _gmail_not_ready_msg(db, user_id)
+    if gmail_err:
+        return gmail_err
+    result = await google_gmail_service.list_messages(db, user_id)
+    if "error" in result:
+        return f"❌ {result['error']}"
+    return format_messages_list_telegram(result.get("messages", []))
+
+
+async def _cmd_emailsearch(db: Session, user_id: str, text: str) -> str:
+    query = text[len("/emailsearch"):].strip()
+    if not query:
+        return (
+            "Use: /emailsearch <consulta>\n"
+            "Exemplos:\n"
+            "  /emailsearch from:joao@email.com\n"
+            "  /emailsearch is:unread subject:relatório\n"
+            "  /emailsearch newer_than:3d"
+        )
+    gmail_err = _gmail_not_ready_msg(db, user_id)
+    if gmail_err:
+        return gmail_err
+    result = await google_gmail_service.search_emails(db, user_id, query=query)
+    if "error" in result:
+        return f"❌ {result['error']}"
+    return format_messages_list_telegram(result.get("messages", []))
+
+
+async def _cmd_thread(db: Session, user_id: str, text: str) -> str:
+    thread_id = text[len("/thread"):].strip()
+    if not thread_id:
+        return "Use: /thread <thread_id>"
+    gmail_err = _gmail_not_ready_msg(db, user_id)
+    if gmail_err:
+        return gmail_err
+    result = await google_gmail_service.get_thread(db, user_id, thread_id=thread_id)
+    if "error" in result:
+        return f"❌ {result['error']}"
+    msgs = result.get("messages", [])
+    if not msgs:
+        return "Nenhuma mensagem nesta thread."
+    lines = [f"📧 Thread ({len(msgs)} mensagens):"]
+    for i, m in enumerate(msgs, 1):
+        sender = m.get("from", "?")
+        if "<" in sender:
+            sender = sender.split("<")[0].strip().strip('"')
+        subject = m.get("subject", "(sem assunto)")
+        body_preview = m.get("body", "")[:200]
+        lines.append(f"\n--- Mensagem {i} ---")
+        lines.append(f"De: {sender}")
+        lines.append(f"Assunto: {subject}")
+        if body_preview:
+            lines.append(f"{body_preview}")
+    return "\n".join(lines)
+
+
+async def _cmd_draftemail(db: Session, user_id: str, text: str) -> str:
+    parts_raw = text[len("/draftemail"):].strip()
+    parts = [p.strip() for p in parts_raw.split("|")]
+    if len(parts) < 3:
+        return (
+            "Use: /draftemail destinatário | assunto | corpo\n"
+            "Exemplo: /draftemail joao@email.com | Reunião amanhã | Olá João, podemos..."
+        )
+    gmail_err = _gmail_not_ready_msg(db, user_id)
+    if gmail_err:
+        return gmail_err
+    result = await google_gmail_service.create_draft(db, user_id, to=parts[0], subject=parts[1], body=parts[2])
+    if "error" in result:
+        return f"❌ {result['error']}"
+    return result.get("message", "Rascunho criado.")
+
+
+async def _cmd_replydraft(db: Session, user_id: str, text: str) -> str:
+    parts_raw = text[len("/replydraft"):].strip()
+    parts = [p.strip() for p in parts_raw.split("|", 1)]
+    if len(parts) < 2 or not parts[0] or not parts[1]:
+        return (
+            "Use: /replydraft <message_id> | <corpo da resposta>\n"
+            "Exemplo: /replydraft 18abc123def | Obrigado, confirmo presença!"
+        )
+    gmail_err = _gmail_not_ready_msg(db, user_id)
+    if gmail_err:
+        return gmail_err
+    result = await google_gmail_service.create_reply_draft(db, user_id, message_id=parts[0], body=parts[1])
+    if "error" in result:
+        return f"❌ {result['error']}"
+    return result.get("message", "Rascunho de resposta criado.")
+
+
+async def _cmd_senddraft(db: Session, user_id: str, text: str) -> str:
+    draft_id = text[len("/senddraft"):].strip()
+    if not draft_id:
+        return "Use: /senddraft <draft_id>"
+    gmail_err = _gmail_not_ready_msg(db, user_id)
+    if gmail_err:
+        return gmail_err
+    result = await google_gmail_service.send_draft(db, user_id, draft_id=draft_id)
+    if "error" in result:
+        return f"❌ {result['error']}"
+    return result.get("message", "E-mail enviado!")
+
+
+async def _cmd_drafts(db: Session, user_id: str) -> str:
+    gmail_err = _gmail_not_ready_msg(db, user_id)
+    if gmail_err:
+        return gmail_err
+    result = await google_gmail_service.list_drafts(db, user_id)
+    if "error" in result:
+        return f"❌ {result['error']}"
+    drafts = result.get("drafts", [])
+    if not drafts:
+        return "📝 Nenhum rascunho encontrado."
+    lines = ["📝 Seus rascunhos:"]
+    for i, d in enumerate(drafts, 1):
+        to_str = d.get("to", "?")
+        subj = d.get("subject", "(sem assunto)")
+        did = d.get("draft_id", "")
+        lines.append(f"{i}. Para: {to_str} — {subj}\n   ID: {did}")
+    return "\n".join(lines)

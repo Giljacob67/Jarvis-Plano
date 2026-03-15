@@ -231,6 +231,65 @@ TOOLS = [
             "required": [],
         },
     },
+    {
+        "type": "function",
+        "name": "get_pending_approvals",
+        "description": "Lista aprovações pendentes do usuário",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "type": "function",
+        "name": "create_approval",
+        "description": "Cria uma aprovação pendente para uma ação sensível (envio de e-mail, criação de evento, follow-up). A ação NÃO é executada — fica aguardando aprovação do usuário via /approve.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action_type": {
+                    "type": "string",
+                    "description": "Tipo da ação: send_email_draft, create_followup_task, create_calendar_event_from_ai, send_proactive_followup_message",
+                },
+                "title": {"type": "string", "description": "Título curto da aprovação"},
+                "summary": {"type": "string", "description": "Resumo descritivo da ação"},
+                "payload": {"type": "object", "description": "Dados necessários para executar a ação"},
+            },
+            "required": ["action_type", "title", "summary"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "run_workflow",
+        "description": "Executa um workflow/playbook. Disponíveis: lead_followup (params: empresa|email|contexto), meeting_prep, inbox_triage",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Nome do workflow"},
+                "params": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Parâmetros do workflow",
+                },
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "get_morning_briefing",
+        "description": "Gera o briefing matinal com agenda, tarefas, e-mails e sugestões do dia",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "type": "function",
+        "name": "get_evening_review",
+        "description": "Gera o fechamento do dia com resumo do que foi feito, pendências e proposta para amanhã",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "type": "function",
+        "name": "get_proactive_suggestions",
+        "description": "Retorna sugestões proativas: eventos próximos, tarefas vencendo, follow-ups e rascunhos pendentes",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
 ]
 
 SENSITIVE_KEYWORDS = [

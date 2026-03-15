@@ -259,6 +259,75 @@ async def tool_executor(tool_name: str, tool_args: dict[str, Any], db: Session |
             "message": "Para enviar e-mails, primeiro crie um rascunho com /draftemail e depois use /senddraft <id> para enviar.",
         }
 
+    if tool_name == "get_pending_approvals":
+        if not db:
+            return []
+        from app.services import approval_service
+        approvals = approval_service.list_pending_approvals(db, user_id)
+        return [
+            {
+                "id": a.id,
+                "action_type": a.action_type,
+                "title": a.title,
+                "summary": a.summary,
+                "status": a.status,
+            }
+            for a in approvals
+        ]
+
+    if tool_name == "create_approval":
+        if not db:
+            return {"error": "Banco não disponível"}
+        from app.services import approval_service
+        action_type = tool_args.get("action_type", "")
+        title = tool_args.get("title", "")
+        summary = tool_args.get("summary", "")
+        payload = tool_args.get("payload", {})
+        result = approval_service.create_pending_approval(
+            db, user_id,
+            action_type=action_type,
+            title=title,
+            summary=summary,
+            payload=payload,
+            source="assistant",
+        )
+        if result is None:
+            return {"error": "Não foi possível criar a aprovação (limite atingido ou erro)."}
+        return {
+            "status": "approval_created",
+            "approval_id": result.id,
+            "message": f"Aprovação criada (#{result.id}). Use /approve {result.id} para aprovar ou /reject {result.id} para rejeitar.",
+        }
+
+    if tool_name == "run_workflow":
+        if not db:
+            return {"error": "Banco não disponível"}
+        from app.services import workflow_service
+        name = tool_args.get("name", "")
+        params = tool_args.get("params", [])
+        result_text = await workflow_service.run_workflow(db, user_id, name, params)
+        return {"result": result_text}
+
+    if tool_name == "get_morning_briefing":
+        if not db:
+            return {"error": "Banco não disponível"}
+        from app.services import proactive_service
+        briefing = await proactive_service.generate_morning_briefing(db, user_id)
+        return {"briefing": briefing}
+
+    if tool_name == "get_evening_review":
+        if not db:
+            return {"error": "Banco não disponível"}
+        from app.services import proactive_service
+        review = await proactive_service.generate_evening_review(db, user_id)
+        return {"review": review}
+
+    if tool_name == "get_proactive_suggestions":
+        if not db:
+            return {"error": "Banco não disponível"}
+        from app.services import proactive_service
+        return await proactive_service.get_proactive_suggestions(db, user_id)
+
     return {"error": f"Tool '{tool_name}' não reconhecida"}
 
 

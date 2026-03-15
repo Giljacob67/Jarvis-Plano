@@ -34,6 +34,21 @@ class Settings(BaseSettings):
     def effective_max_audio_mb(self) -> int:
         return min(self.max_audio_file_mb, 20)
 
+    proactive_features_enabled: bool = True
+    morning_briefing_enabled: bool = True
+    morning_briefing_time: str = "08:00"
+    evening_review_enabled: bool = True
+    evening_review_time: str = "18:30"
+    reminder_check_interval_minutes: int = 10
+    default_timezone: str = "America/Sao_Paulo"
+    approvals_enabled: bool = True
+    max_pending_approvals: int = 20
+    followup_default_days: int = 2
+    quiet_hours_enabled: bool = True
+    quiet_hours_start: str = "22:00"
+    quiet_hours_end: str = "07:00"
+    proactive_min_interval_minutes: int = 30
+
     google_gmail_enabled: bool = True
     google_gmail_scopes: str = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose"
     gmail_inbox_query_default: str = "in:inbox newer_than:7d"

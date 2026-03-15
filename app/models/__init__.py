@@ -6,6 +6,11 @@ from app.models.memory_item import MemoryItem
 from app.models.action_log import ActionLog
 from app.models.google_credential import GoogleCredential
 from app.models.voice_message_log import VoiceMessageLog
+from app.models.routine_config import RoutineConfig
+from app.models.pending_approval import PendingApproval
+from app.models.workflow_run import WorkflowRun
+from app.models.suggestion_log import SuggestionLog
+from app.models.routine_execution_log import RoutineExecutionLog
 
 __all__ = [
     "User",
@@ -16,4 +21,9 @@ __all__ = [
     "ActionLog",
     "GoogleCredential",
     "VoiceMessageLog",
+    "RoutineConfig",
+    "PendingApproval",
+    "WorkflowRun",
+    "SuggestionLog",
+    "RoutineExecutionLog",
 ]

@@ -58,3 +58,28 @@ def search_memories(
         .limit(limit)
         .all()
     )
+
+
+VALID_CATEGORIES = [
+    "general", "profile", "preference", "project", "contact",
+    "routine", "decision", "followup", "voice_preference",
+]
+
+
+def get_memories_by_context(
+    db: Session,
+    user_id: str,
+    categories: list[str],
+    limit: int = 20,
+) -> list[MemoryItem]:
+    return (
+        db.query(MemoryItem)
+        .filter(
+            MemoryItem.user_id == user_id,
+            MemoryItem.is_active == True,
+            MemoryItem.category.in_(categories),
+        )
+        .order_by(MemoryItem.created_at.desc())
+        .limit(limit)
+        .all()
+    )

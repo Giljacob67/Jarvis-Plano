@@ -10,6 +10,7 @@ from app.config import settings
 from app.db import init_db
 from app.routes import api_router
 from app.services import telegram_service
+from app.services.scheduler_service import start_scheduler, stop_scheduler
 
 logging.basicConfig(
     level=logging.DEBUG if settings.app_env == "development" else logging.INFO,
@@ -28,7 +29,11 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Database initialized")
     await telegram_service.start()
     logger.info("TelegramService httpx client started")
+    await start_scheduler()
+    logger.info("Scheduler started")
     yield
+    await stop_scheduler()
+    logger.info("Scheduler stopped")
     await telegram_service.stop()
     logger.info("TelegramService httpx client stopped")
     logger.info("Shutting down Jarvis Pessoal")

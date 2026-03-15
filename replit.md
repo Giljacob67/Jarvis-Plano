@@ -15,14 +15,17 @@ Hybrid workspace: a pnpm monorepo (TypeScript) plus a standalone Python FastAPI 
 - **Google**: OAuth 2.0 + Calendar API + Tasks API + Gmail API (real data when connected, mock fallback)
 - **Workflow**: `Jarvis Pessoal` — runs `uvicorn app.main:app --host 0.0.0.0 --port 8000`
 - **Voice**: OpenAI Audio API (transcribe + TTS), Telegram voice/audio download and send
-- **Tests**: `pytest tests/ -v` (114 tests)
+- **Proactive**: Scheduler with morning briefing, evening review, due task/event reminders
+- **Approvals**: Pending approval center for sensitive actions (email send, follow-up, event creation)
+- **Workflows**: 3 playbooks (lead_followup, meeting_prep, inbox_triage)
+- **Tests**: `pytest tests/ -v` (179 tests)
 
 ### Python project structure
 
 ```text
 app/
-├── main.py              # FastAPI app with lifespan (TelegramService start/stop), error handler
-├── config.py            # Pydantic Settings (reads .env, includes Google OAuth scopes, encryption key)
+├── main.py              # FastAPI app with lifespan (TelegramService, scheduler start/stop), error handler
+├── config.py            # Pydantic Settings (reads .env, includes Google OAuth scopes, encryption key, Phase 6 config)
 ├── db.py                # SQLAlchemy engine, session, Base
 ├── prompts.py           # System prompt (pt-BR) and context formatting helpers
 ├── models/              # SQLAlchemy models
@@ -30,31 +33,40 @@ app/
 │   ├── processed_update.py  # ProcessedTelegramUpdate (idempotency)
 │   ├── conversation.py  # Conversation
 │   ├── message.py       # Message (role, text, raw_json)
-│   ├── memory_item.py   # MemoryItem (user notes/reminders)
-│   ├── action_log.py    # ActionLog (sensitive actions blocked)
+│   ├── memory_item.py   # MemoryItem (user notes/reminders with categories)
+│   ├── action_log.py    # ActionLog (all events: suggestions, approvals, proactive msgs)
 │   ├── google_credential.py  # GoogleCredential (OAuth tokens per user)
-│   └── voice_message_log.py  # VoiceMessageLog (voice processing metadata, transcription_raw_json)
+│   ├── voice_message_log.py  # VoiceMessageLog (voice processing metadata)
+│   ├── routine_config.py     # RoutineConfig (per-user routine on/off)
+│   ├── pending_approval.py   # PendingApproval (approval center with expiry + idempotency)
+│   ├── workflow_run.py       # WorkflowRun (playbook execution log)
+│   ├── suggestion_log.py     # SuggestionLog (proactive suggestion tracking)
+│   └── routine_execution_log.py  # RoutineExecutionLog (dedup for scheduler runs)
 ├── schemas/             # Pydantic schemas (health, telegram, day, common)
 ├── routes/
 │   ├── health.py        # GET /health
-│   ├── telegram.py      # POST /webhooks/telegram (commands + voice/audio pipeline)
+│   ├── telegram.py      # POST /webhooks/telegram (all commands + voice/audio pipeline)
 │   ├── auth.py          # Google OAuth routes (/start, /callback, /status, /disconnect)
 │   └── day.py           # GET /me/day (real data or mock fallback)
 ├── services/
 │   ├── telegram.py      # TelegramService (download_file, send_voice, send_audio)
 │   ├── audio_service.py   # AudioService (transcribe, TTS, voice preference)
-│   ├── openai_service.py  # OpenAIService (Responses API, function calling, 16 tools)
-│   ├── assistant_service.py  # Orchestrates context, history, memories, tool execution, Google/Gmail fallback
-│   ├── memory_service.py    # save_memory, list_memories, search_memories
-│   ├── google_oauth_service.py  # OAuth flow (auth URL, code exchange, token refresh, revoke, has_gmail_scopes)
+│   ├── openai_service.py  # OpenAIService (Responses API, function calling, 23 tools)
+│   ├── assistant_service.py  # Orchestrates context, history, memories, tool execution
+│   ├── memory_service.py    # save_memory, list_memories, search_memories, get_memories_by_context
+│   ├── google_oauth_service.py  # OAuth flow (auth URL, code exchange, token refresh, revoke)
 │   ├── google_calendar.py   # Google Calendar API (list events, create events)
 │   ├── google_tasks.py      # Google Tasks API (list tasks, create tasks, complete tasks)
 │   ├── google_gmail_service.py  # Gmail API (list, get, thread, drafts, send, reply)
-│   └── gmail.py             # Deprecated stub (kept for compatibility)
+│   ├── approval_service.py     # Approval center (create, list, approve, reject, execute)
+│   ├── proactive_service.py    # Proactive features (briefing, review, suggestions, quiet hours)
+│   ├── workflow_service.py     # Workflow/playbook engine (3 playbooks)
+│   ├── scheduler_service.py    # Asyncio scheduler (routines, reminders)
+│   └── gmail.py             # Deprecated stub
 ├── utils/
-│   ├── date_utils.py    # Timezone helpers (today_bounds, parse_datetime, week_bounds)
-│   └── gmail_utils.py   # Gmail helpers (MIME, headers, body extraction, formatting)
-tests/                   # pytest tests (87 tests)
+│   ├── date_utils.py    # Timezone helpers
+│   └── gmail_utils.py   # Gmail helpers
+tests/                   # pytest tests (179 tests)
 scripts/
 ├── set_telegram_webhook.py
 └── get_telegram_webhook_info.py
@@ -62,23 +74,57 @@ requirements.txt
 .env.example
 ```
 
+### Telegram commands
+
+| Command | Description |
+|---------|-------------|
+| /start, /help | Welcome / help text |
+| /myday | Full day overview (agenda + tasks + emails + approvals + suggestions) |
+| /briefing | Morning briefing |
+| /review | Evening review / day closing |
+| /remember <text> | Save a note |
+| /memories | List recent notes |
+| /connectgoogle | Connect Google account |
+| /google | Google connection status |
+| /tasks | List pending tasks |
+| /newtask <title> | Create task |
+| /newevent <title>\|<start>\|<end> | Create calendar event |
+| /inbox | Recent inbox emails |
+| /emailsearch <query> | Search emails |
+| /thread <id> | View email thread |
+| /draftemail <to>\|<subject>\|<body> | Create draft |
+| /replydraft <msg_id>\|<body> | Reply draft |
+| /senddraft <draft_id> | Send draft |
+| /drafts | List drafts |
+| /inboxsummary | Inbox summary |
+| /approvals | List pending approvals |
+| /approve <id> | Approve an action |
+| /reject <id> | Reject an action |
+| /playbooks | List available workflows |
+| /runworkflow <name> [\| params] | Run a workflow |
+| /routineon <type> | Enable routine (morning/evening/reminders) |
+| /routineoff <type> | Disable routine |
+| /routinestatus | Routine status |
+| /quieton / /quietoff / /quietstatus | Quiet hours control |
+| /voiceon / /voiceoff / /voicestatus | Voice response control |
+
 ### Key env vars (Python)
 
 - `JARVIS_DATABASE_URL` — defaults to `sqlite:///./jarvis.db`
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_ALLOWED_USER_ID` (string)
 - `OPENAI_API_KEY`, `OPENAI_MODEL` (default: `gpt-5-mini`)
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
-- `GOOGLE_OAUTH_SCOPES` — defaults to `calendar.events tasks`
-- `GOOGLE_GMAIL_ENABLED` — `true` (default) or `false`
-- `GOOGLE_GMAIL_SCOPES` — defaults to `gmail.readonly gmail.compose`
+- `GOOGLE_OAUTH_SCOPES`, `GOOGLE_GMAIL_ENABLED`, `GOOGLE_GMAIL_SCOPES`
 - `GMAIL_INBOX_QUERY_DEFAULT`, `GMAIL_MAX_LIST_RESULTS`
-- `OPENAI_TRANSCRIBE_MODEL` — default `gpt-4o-mini-transcribe`
-- `OPENAI_TTS_MODEL` — default `gpt-4o-mini-tts`
-- `VOICE_RESPONSES_ENABLED` — `false` (default); set `true` to enable TTS replies
-- `VOICE_RESPONSE_VOICE` — TTS voice (default: `alloy`)
-- `MAX_AUDIO_FILE_MB` — max audio size (default: `19`, max: `20`)
-- `TEMP_AUDIO_DIR` — temp dir for audio files (default: `/tmp/jarvis_audio`)
-- `GOOGLE_ENCRYPTION_KEY` — reserved for future token encryption
+- `OPENAI_TRANSCRIBE_MODEL`, `OPENAI_TTS_MODEL`
+- `VOICE_RESPONSES_ENABLED`, `VOICE_RESPONSE_VOICE`, `MAX_AUDIO_FILE_MB`
+- `PROACTIVE_FEATURES_ENABLED` — enable proactive features (default: true)
+- `MORNING_BRIEFING_ENABLED`, `MORNING_BRIEFING_TIME` — morning briefing (default: true, 07:30)
+- `EVENING_REVIEW_ENABLED`, `EVENING_REVIEW_TIME` — evening review (default: true, 18:00)
+- `QUIET_HOURS_ENABLED`, `QUIET_HOURS_START`, `QUIET_HOURS_END` — quiet hours (default: true, 22:00–07:00)
+- `PROACTIVE_MIN_INTERVAL_MINUTES` — cooldown between proactive messages (default: 30)
+- `MAX_PENDING_APPROVALS` — max pending approvals per user (default: 20)
+- `REMINDER_CHECK_INTERVAL_MINUTES` — scheduler check interval (default: 10)
 - `APP_ENV`, `TIMEZONE`, `APP_BASE_URL`
 
 ### Key design decisions
@@ -91,8 +137,13 @@ requirements.txt
 - **Webhook security order**: secret header → allowed user_id → idempotency → dispatch
 - **Google OAuth**: access_type=offline, prompt=consent, state validation (CSRF protection)
 - **Google fallback**: When not connected, /myday and /me/day return mock data
-- **Tokens stored as plain text** for now (GOOGLE_ENCRYPTION_KEY reserved for future)
-- **OAuth state**: stored in-memory dict (_pending_states); cleared on use
+- **Phase 6 architecture**: suggestion_created → approval_created → approval_approved → approval_executed (each logged in ActionLog)
+- **PendingApproval**: has `expires_at`, `idempotency_key` (unique constraint), `executed_at` for idempotency
+- **Workflow params**: `/runworkflow lead_followup | Empresa X | email@x.com | contexto` — split by `|`
+- **RoutineExecutionLog**: unique on (routine_type, run_key) for dedup — run_key = e.g. `briefing_2026-03-15`
+- **Scheduler**: asyncio task started in lifespan, checks routines every `reminder_check_interval_minutes`
+- **Quiet hours**: global setting + per-user MemoryItem(category="preference", content="quiet_hours_disabled")
+- **Cooldown**: checked via ActionLog("proactive_message_sent") recency
 
 ## Node.js / TypeScript Stack
 
