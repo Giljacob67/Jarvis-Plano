@@ -1,30 +1,15 @@
-from datetime import date
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
-from app.schemas import DayOverview, CalendarEvent, Task, Email
+from app.config import settings
+from app.db import get_db
+from app.schemas.day import DayOverview
+from app.services.assistant_service import get_real_or_mock_day_overview
 
 router = APIRouter()
 
 
 @router.get("/day", response_model=DayOverview)
-async def get_day_overview() -> DayOverview:
-    today = date.today().isoformat()
-
-    return DayOverview(
-        date=today,
-        calendar=[
-            CalendarEvent(title="Daily standup", start="09:00", end="09:30", location="Google Meet"),
-            CalendarEvent(title="Sprint review", start="14:00", end="15:00", location="Zoom"),
-            CalendarEvent(title="Lunch with client", start="12:00", end="13:00", location="Restaurante Central"),
-        ],
-        tasks=[
-            Task(title="Review PR #42", due=today, status="pending"),
-            Task(title="Write API docs", due=today, status="in_progress"),
-            Task(title="Deploy staging", due=today, status="done"),
-        ],
-        emails=[
-            Email(subject="Quarterly report ready", sender="cfo@company.com", snippet="The Q1 report is attached...", priority="high"),
-            Email(subject="Team offsite planning", sender="hr@company.com", snippet="Please vote on the dates...", priority="normal"),
-            Email(subject="Invoice #1234", sender="billing@vendor.com", snippet="Your invoice is due on...", priority="low"),
-        ],
-    )
+async def get_day_overview(db: Session = Depends(get_db)) -> DayOverview:
+    user_id = settings.telegram_allowed_user_id or "default"
+    return await get_real_or_mock_day_overview(db, user_id)

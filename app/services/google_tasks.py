@@ -1,25 +1,124 @@
 import logging
 from typing import Any
 
+from sqlalchemy.orm import Session
+
+from app.services.google_oauth_service import get_credentials
+
 logger = logging.getLogger(__name__)
 
 
-class GoogleTasksService:
-    # TODO: Implement real Google Tasks integration
-    # - OAuth2 token management
-    # - List task lists
-    # - List tasks from default list
-    # - Create/update/complete tasks
-    # - Sync with local database
+def _build_service(db: Session, user_id: str):
+    creds = get_credentials(db, user_id)
+    if creds is None:
+        return None
+    from googleapiclient.discovery import build
+    return build("tasks", "v1", credentials=creds)
 
-    def __init__(self, client_id: str, client_secret: str) -> None:
-        self.client_id = client_id
-        self.client_secret = client_secret
 
-    async def list_tasks(self, access_token: str, task_list_id: str = "@default") -> list[dict[str, Any]]:
-        logger.info("STUB: list_tasks(task_list_id=%s)", task_list_id)
+async def list_task_lists(db: Session, user_id: str) -> list[dict[str, Any]]:
+    service = _build_service(db, user_id)
+    if service is None:
         return []
 
-    async def create_task(self, access_token: str, title: str, due: str = "") -> dict[str, Any]:
-        logger.info("STUB: create_task(title=%r)", title)
-        return {"id": "stub", "title": title, "status": "needsAction"}
+    try:
+        result = service.tasklists().list(maxResults=20).execute()
+        return [
+            {"id": tl.get("id", ""), "title": tl.get("title", "")}
+            for tl in result.get("items", [])
+        ]
+    except Exception:
+        logger.exception("Failed to list task lists for user=%s", user_id)
+        return []
+
+
+async def list_tasks(
+    db: Session,
+    user_id: str,
+    tasklist_id: str | None = None,
+    show_completed: bool = False,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    service = _build_service(db, user_id)
+    if service is None:
+        return []
+
+    tl_id = tasklist_id or "@default"
+    try:
+        result = service.tasks().list(
+            tasklist=tl_id,
+            maxResults=limit,
+            showCompleted=show_completed,
+            showHidden=False,
+        ).execute()
+        items = result.get("items", [])
+        return [
+            {
+                "id": t.get("id", ""),
+                "title": t.get("title", ""),
+                "notes": t.get("notes", ""),
+                "due": t.get("due", ""),
+                "status": t.get("status", "needsAction"),
+            }
+            for t in items
+            if t.get("title", "").strip()
+        ]
+    except Exception:
+        logger.exception("Failed to list tasks for user=%s", user_id)
+        return []
+
+
+async def create_task(
+    db: Session,
+    user_id: str,
+    title: str,
+    notes: str | None = None,
+    due: str | None = None,
+    tasklist_id: str | None = None,
+) -> dict[str, Any]:
+    service = _build_service(db, user_id)
+    if service is None:
+        return {"error": "Google não conectado. Use /connectgoogle para conectar."}
+
+    tl_id = tasklist_id or "@default"
+    body: dict[str, Any] = {"title": title}
+    if notes:
+        body["notes"] = notes
+    if due:
+        if "T" not in due:
+            due = f"{due}T00:00:00.000Z"
+        body["due"] = due
+
+    try:
+        created = service.tasks().insert(tasklist=tl_id, body=body).execute()
+        logger.info("Created task id=%s for user=%s", created.get("id"), user_id)
+        return {
+            "id": created.get("id"),
+            "title": created.get("title"),
+            "status": created.get("status"),
+        }
+    except Exception:
+        logger.exception("Failed to create task for user=%s", user_id)
+        return {"error": "Erro ao criar tarefa no Google Tasks."}
+
+
+async def complete_task(
+    db: Session,
+    user_id: str,
+    task_id: str,
+    tasklist_id: str | None = None,
+) -> dict[str, Any]:
+    service = _build_service(db, user_id)
+    if service is None:
+        return {"error": "Google não conectado. Use /connectgoogle para conectar."}
+
+    tl_id = tasklist_id or "@default"
+    try:
+        task = service.tasks().get(tasklist=tl_id, task=task_id).execute()
+        task["status"] = "completed"
+        updated = service.tasks().update(tasklist=tl_id, task=task_id, body=task).execute()
+        logger.info("Completed task id=%s for user=%s", task_id, user_id)
+        return {"id": updated.get("id"), "title": updated.get("title"), "status": "completed"}
+    except Exception:
+        logger.exception("Failed to complete task for user=%s", user_id)
+        return {"error": "Erro ao completar tarefa no Google Tasks."}

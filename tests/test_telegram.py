@@ -77,7 +77,7 @@ def test_telegram_voice_message(client: TestClient, _patch_telegram_send) -> Non
     assert response.json()["message"] == "voice_noted"
     _patch_telegram_send.assert_called_once()
     call_args = _patch_telegram_send.call_args
-    assert "Fase 3" in call_args[0][1] or "Fase 3" in str(call_args)
+    assert "áudio" in call_args[0][1].lower() or "voz" in call_args[0][1].lower()
 
 
 def test_telegram_start_command(client: TestClient, _patch_telegram_send) -> None:

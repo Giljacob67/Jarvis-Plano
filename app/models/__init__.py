@@ -4,6 +4,7 @@ from app.models.conversation import Conversation
 from app.models.message import Message
 from app.models.memory_item import MemoryItem
 from app.models.action_log import ActionLog
+from app.models.google_credential import GoogleCredential
 
 __all__ = [
     "User",
@@ -12,4 +13,5 @@ __all__ = [
     "Message",
     "MemoryItem",
     "ActionLog",
+    "GoogleCredential",
 ]

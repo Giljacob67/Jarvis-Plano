@@ -12,15 +12,16 @@ Hybrid workspace: a pnpm monorepo (TypeScript) plus a standalone Python FastAPI 
 - **Database**: SQLAlchemy with SQLite (configurable via `JARVIS_DATABASE_URL`)
 - **AI**: OpenAI Responses API with function calling (model default: `gpt-5-mini`)
 - **Bot**: Telegram Bot API via webhooks
+- **Google**: OAuth 2.0 + Calendar API + Tasks API (real data when connected, mock fallback)
 - **Workflow**: `Jarvis Pessoal` — runs `uvicorn app.main:app --host 0.0.0.0 --port 8000`
-- **Tests**: `pytest tests/ -v` (21 tests)
+- **Tests**: `pytest tests/ -v` (48 tests)
 
 ### Python project structure
 
 ```text
 app/
 ├── main.py              # FastAPI app with lifespan (TelegramService start/stop), error handler
-├── config.py            # Pydantic Settings (reads .env, includes openai_model, context limits, tool round limits)
+├── config.py            # Pydantic Settings (reads .env, includes Google OAuth scopes, encryption key)
 ├── db.py                # SQLAlchemy engine, session, Base
 ├── prompts.py           # System prompt (pt-BR) and context formatting helpers
 ├── models/              # SQLAlchemy models
@@ -29,27 +30,31 @@ app/
 │   ├── conversation.py  # Conversation
 │   ├── message.py       # Message (role, text, raw_json)
 │   ├── memory_item.py   # MemoryItem (user notes/reminders)
-│   └── action_log.py    # ActionLog (sensitive actions blocked)
+│   ├── action_log.py    # ActionLog (sensitive actions blocked)
+│   └── google_credential.py  # GoogleCredential (OAuth tokens per user)
 ├── schemas/             # Pydantic schemas (health, telegram, day, common)
 ├── routes/
 │   ├── health.py        # GET /health
-│   ├── telegram.py      # POST /webhooks/telegram (secret validation → user filter → idempotency → dispatch)
-│   ├── auth.py          # Google OAuth stubs (501)
-│   └── day.py           # GET /me/day (mock data)
+│   ├── telegram.py      # POST /webhooks/telegram (commands: /start, /help, /myday, /remember, /memories, /connectgoogle, /google, /tasks, /newtask, /newevent)
+│   ├── auth.py          # Google OAuth routes (/start, /callback, /status, /disconnect)
+│   └── day.py           # GET /me/day (real data or mock fallback)
 ├── services/
-│   ├── telegram.py      # TelegramService (reused httpx.AsyncClient, send_message, set_webhook, etc.)
-│   ├── openai_service.py  # OpenAIService (Responses API, function calling, tool round limit)
-│   ├── assistant_service.py  # AssistantService (orchestrates context, history, memories, tool execution)
+│   ├── telegram.py      # TelegramService (reused httpx.AsyncClient)
+│   ├── openai_service.py  # OpenAIService (Responses API, function calling, 8 tools)
+│   ├── assistant_service.py  # Orchestrates context, history, memories, tool execution, Google fallback
 │   ├── memory_service.py    # save_memory, list_memories, search_memories
-│   ├── google_calendar.py   # Stub (Fase 3)
-│   ├── gmail.py             # Stub (Fase 3)
-│   └── google_tasks.py      # Stub (Fase 3)
-tests/                   # pytest tests (21 tests: health, auth, day, telegram commands/security/idempotency)
+│   ├── google_oauth_service.py  # OAuth flow (auth URL, code exchange, token refresh, revoke)
+│   ├── google_calendar.py   # Google Calendar API (list events, create events)
+│   ├── google_tasks.py      # Google Tasks API (list tasks, create tasks, complete tasks)
+│   └── gmail.py             # Stub (phase future)
+├── utils/
+│   └── date_utils.py    # Timezone helpers (today_bounds, parse_datetime, week_bounds)
+tests/                   # pytest tests (48 tests)
 scripts/
-├── set_telegram_webhook.py      # Set webhook via Telegram Bot API
-└── get_telegram_webhook_info.py # Check current webhook status
-requirements.txt         # Python dependencies
-.env.example             # Environment variable template
+├── set_telegram_webhook.py
+└── get_telegram_webhook_info.py
+requirements.txt
+.env.example
 ```
 
 ### Key env vars (Python)
@@ -58,6 +63,8 @@ requirements.txt         # Python dependencies
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_ALLOWED_USER_ID` (string)
 - `OPENAI_API_KEY`, `OPENAI_MODEL` (default: `gpt-5-mini`)
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
+- `GOOGLE_OAUTH_SCOPES` — defaults to `calendar.events tasks`
+- `GOOGLE_ENCRYPTION_KEY` — reserved for future token encryption
 - `APP_ENV`, `TIMEZONE`, `APP_BASE_URL`
 
 ### Key design decisions
@@ -68,6 +75,10 @@ requirements.txt         # Python dependencies
 - **Context limits**: configurable max messages (20) and max memories (10) per LLM call
 - **All bot responses in pt-BR**
 - **Webhook security order**: secret header → allowed user_id → idempotency → dispatch
+- **Google OAuth**: access_type=offline, prompt=consent, state validation (CSRF protection)
+- **Google fallback**: When not connected, /myday and /me/day return mock data
+- **Tokens stored as plain text** for now (GOOGLE_ENCRYPTION_KEY reserved for future)
+- **OAuth state**: stored in-memory dict (_pending_states); cleared on use
 
 ## Node.js / TypeScript Stack
 

@@ -8,10 +8,15 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.conversation import Conversation
 from app.models.message import Message
+from app.models.action_log import ActionLog
 from app.prompts import format_history_context
 from app.services.memory_service import save_memory, list_memories
 from app.services.openai_service import OpenAIService
+from app.services import google_oauth_service
+from app.services import google_calendar as google_calendar_service
+from app.services import google_tasks as google_tasks_service
 from app.schemas.day import DayOverview, CalendarEvent, Task, Email
+from app.utils.date_utils import parse_datetime_local
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +45,57 @@ def get_mock_day_overview() -> DayOverview:
     )
 
 
+async def get_real_or_mock_day_overview(db: Session, user_id: str) -> DayOverview:
+    today = date.today().isoformat()
+    tz = settings.timezone
+
+    status = google_oauth_service.get_status(db, user_id)
+    if not status.get("connected"):
+        return get_mock_day_overview()
+
+    try:
+        events = await google_calendar_service.list_today_events(db, user_id, tz)
+        cal_items = [
+            CalendarEvent(
+                title=ev.get("title", ""),
+                start=ev.get("start", ""),
+                end=ev.get("end", ""),
+                location=ev.get("location", ""),
+            )
+            for ev in events
+        ]
+    except Exception:
+        logger.exception("Failed to get Google Calendar events, falling back to mock")
+        cal_items = get_mock_day_overview().calendar
+
+    try:
+        tasks = await google_tasks_service.list_tasks(db, user_id, limit=20)
+        task_items = [
+            Task(
+                title=t.get("title", ""),
+                due=t.get("due", ""),
+                status="done" if t.get("status") == "completed" else "pending",
+            )
+            for t in tasks
+        ]
+    except Exception:
+        logger.exception("Failed to get Google Tasks, falling back to mock")
+        task_items = get_mock_day_overview().tasks
+
+    return DayOverview(
+        date=today,
+        calendar=cal_items,
+        tasks=task_items,
+        emails=[],
+    )
+
+
 async def tool_executor(tool_name: str, tool_args: dict[str, Any], db: Session | None, user_id: str) -> Any:
     if tool_name == "get_my_day":
-        overview = get_mock_day_overview()
+        if db:
+            overview = await get_real_or_mock_day_overview(db, user_id)
+        else:
+            overview = get_mock_day_overview()
         return overview.model_dump()
 
     if tool_name == "save_memory":
@@ -60,7 +113,77 @@ async def tool_executor(tool_name: str, tool_args: dict[str, Any], db: Session |
             return [{"content": m.content, "category": m.category} for m in items]
         return []
 
+    if tool_name == "list_tasks":
+        if not db:
+            return []
+        status = google_oauth_service.get_status(db, user_id)
+        if not status.get("connected"):
+            return {"error": "Google não conectado. Use /connectgoogle para conectar sua conta."}
+        limit = tool_args.get("limit", 10)
+        return await google_tasks_service.list_tasks(db, user_id, limit=limit)
+
+    if tool_name == "create_task":
+        if not db:
+            return {"error": "Banco não disponível"}
+        status = google_oauth_service.get_status(db, user_id)
+        if not status.get("connected"):
+            return {"error": "Google não conectado. Use /connectgoogle para conectar sua conta."}
+        title = tool_args.get("title", "")
+        notes = tool_args.get("notes")
+        due = tool_args.get("due")
+        result = await google_tasks_service.create_task(db, user_id, title, notes=notes, due=due)
+        if "error" not in result:
+            _log_action(db, "create_task", "success", {"title": title, "user_id": user_id})
+        return result
+
+    if tool_name == "list_upcoming_events":
+        if not db:
+            return []
+        status = google_oauth_service.get_status(db, user_id)
+        if not status.get("connected"):
+            return {"error": "Google não conectado. Use /connectgoogle para conectar sua conta."}
+        days = tool_args.get("days", 7)
+        limit = tool_args.get("limit", 10)
+        return await google_calendar_service.list_upcoming_events(db, user_id, days=days, limit=limit, tz=settings.timezone)
+
+    if tool_name == "create_event":
+        if not db:
+            return {"error": "Banco não disponível"}
+        status = google_oauth_service.get_status(db, user_id)
+        if not status.get("connected"):
+            return {"error": "Google não conectado. Use /connectgoogle para conectar sua conta."}
+        title = tool_args.get("title", "")
+        tz = tool_args.get("timezone", settings.timezone)
+        try:
+            start_dt = parse_datetime_local(tool_args.get("start_time", ""), tz)
+            end_dt = parse_datetime_local(tool_args.get("end_time", ""), tz)
+        except ValueError as e:
+            return {"error": str(e)}
+        result = await google_calendar_service.create_event(
+            db, user_id, title, start_dt, end_dt, tz=tz,
+            description=tool_args.get("description"),
+            location=tool_args.get("location"),
+        )
+        if "error" not in result:
+            _log_action(db, "create_event", "success", {"title": title, "user_id": user_id})
+        return result
+
+    if tool_name == "get_google_connection_status":
+        if not db:
+            return {"connected": False}
+        return google_oauth_service.get_status(db, user_id)
+
     return {"error": f"Tool '{tool_name}' não reconhecida"}
+
+
+def _log_action(db: Session, event_type: str, status: str, details: dict) -> None:
+    entry = ActionLog(
+        event_type=event_type,
+        status=status,
+        details_json=json.dumps(details, ensure_ascii=False),
+    )
+    db.add(entry)
+    db.commit()
 
 
 def _get_or_create_conversation(db: Session, user_id: str) -> Conversation:
@@ -132,18 +255,29 @@ async def handle_free_text(db: Session, user_id: str, text: str, raw_update: dic
 
 def format_day_overview_text(overview: DayOverview) -> str:
     lines = [f"📅 Resumo do dia ({overview.date}):", ""]
-    lines.append("📆 Agenda:")
-    for ev in overview.calendar:
-        loc = f" — {ev.location}" if ev.location else ""
-        lines.append(f"  • {ev.start}–{ev.end}: {ev.title}{loc}")
-    lines.append("")
-    lines.append("✅ Tarefas:")
-    for t in overview.tasks:
-        status_icon = {"done": "✓", "in_progress": "⏳", "pending": "○"}.get(t.status, "○")
-        lines.append(f"  {status_icon} {t.title}")
-    lines.append("")
-    lines.append("📧 E-mails prioritários:")
-    for e in overview.emails:
-        prio = {"high": "🔴", "normal": "🟡", "low": "⚪"}.get(e.priority, "⚪")
-        lines.append(f"  {prio} {e.subject} (de {e.sender})")
+    if overview.calendar:
+        lines.append("📆 Agenda:")
+        for ev in overview.calendar:
+            loc = f" — {ev.location}" if ev.location else ""
+            lines.append(f"  • {ev.start}–{ev.end}: {ev.title}{loc}")
+        lines.append("")
+    else:
+        lines.append("📆 Nenhum evento na agenda hoje.")
+        lines.append("")
+
+    if overview.tasks:
+        lines.append("✅ Tarefas:")
+        for t in overview.tasks:
+            status_icon = {"done": "✓", "in_progress": "⏳", "pending": "○"}.get(t.status, "○")
+            lines.append(f"  {status_icon} {t.title}")
+        lines.append("")
+    else:
+        lines.append("✅ Nenhuma tarefa pendente.")
+        lines.append("")
+
+    if overview.emails:
+        lines.append("📧 E-mails prioritários:")
+        for e in overview.emails:
+            prio = {"high": "🔴", "normal": "🟡", "low": "⚪"}.get(e.priority, "⚪")
+            lines.append(f"  {prio} {e.subject} (de {e.sender})")
     return "\n".join(lines)

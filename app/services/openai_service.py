@@ -48,6 +48,80 @@ TOOLS = [
             "required": [],
         },
     },
+    {
+        "type": "function",
+        "name": "list_tasks",
+        "description": "Lista tarefas pendentes do Google Tasks",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Número máximo de tarefas a retornar",
+                    "default": 10,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "type": "function",
+        "name": "create_task",
+        "description": "Cria uma nova tarefa no Google Tasks",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Título da tarefa"},
+                "notes": {"type": "string", "description": "Notas/descrição da tarefa"},
+                "due": {"type": "string", "description": "Data de vencimento (YYYY-MM-DD)"},
+            },
+            "required": ["title"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "list_upcoming_events",
+        "description": "Lista próximos eventos do Google Calendar",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "Número de dias à frente para buscar eventos",
+                    "default": 7,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Número máximo de eventos",
+                    "default": 10,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "type": "function",
+        "name": "create_event",
+        "description": "Cria um evento no Google Calendar",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Título do evento"},
+                "start_time": {"type": "string", "description": "Início (YYYY-MM-DD HH:MM)"},
+                "end_time": {"type": "string", "description": "Fim (YYYY-MM-DD HH:MM)"},
+                "timezone": {"type": "string", "description": "Timezone (padrão: America/Sao_Paulo)"},
+                "description": {"type": "string", "description": "Descrição do evento"},
+                "location": {"type": "string", "description": "Local do evento"},
+            },
+            "required": ["title", "start_time", "end_time"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "get_google_connection_status",
+        "description": "Verifica se a conta Google do usuário está conectada",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
 ]
 
 SENSITIVE_KEYWORDS = [

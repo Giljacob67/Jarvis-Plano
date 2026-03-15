@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
     google_redirect_uri: str = ""
+    google_oauth_scopes: str = "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/tasks"
+    google_encryption_key: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
