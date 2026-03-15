@@ -21,7 +21,8 @@ def _get_openai_client():
 
 async def transcribe_file(file_path: str, language: str = "pt") -> dict[str, Any]:
     file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-    if file_size_mb > settings.max_audio_file_mb:
+    max_mb = settings.effective_max_audio_mb
+    if file_size_mb > max_mb:
         return {
             "error": f"Arquivo de áudio muito grande ({file_size_mb:.1f} MB). Limite: {settings.max_audio_file_mb} MB.",
             "text": None,
@@ -69,7 +70,7 @@ async def transcribe_file(file_path: str, language: str = "pt") -> dict[str, Any
         }
 
 
-async def synthesize_speech(text: str, voice: str | None = None, output_format: str = "mp3") -> dict[str, Any]:
+async def synthesize_speech(text: str, voice: str | None = None, output_format: str = "opus") -> dict[str, Any]:
     if not settings.openai_api_key:
         return {"error": "OPENAI_API_KEY não configurada.", "audio_bytes": None}
 

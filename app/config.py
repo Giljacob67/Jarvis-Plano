@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     max_audio_file_mb: int = 19
     temp_audio_dir: str = "/tmp/jarvis_audio"
 
+    @property
+    def effective_max_audio_mb(self) -> int:
+        return min(self.max_audio_file_mb, 20)
+
     google_gmail_enabled: bool = True
     google_gmail_scopes: str = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose"
     gmail_inbox_query_default: str = "in:inbox newer_than:7d"

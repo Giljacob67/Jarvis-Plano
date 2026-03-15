@@ -125,11 +125,12 @@ async def _handle_voice_message(
         "file_size": file_size,
     })
 
-    if file_size and file_size > settings.max_audio_file_mb * 1024 * 1024:
+    max_mb = settings.effective_max_audio_mb
+    if file_size and file_size > max_mb * 1024 * 1024:
         voice_log.processing_status = "error"
         voice_log.error_message = f"Arquivo muito grande: {file_size / (1024*1024):.1f} MB"
         db.commit()
-        return f"⚠️ O arquivo de áudio é muito grande ({file_size / (1024*1024):.1f} MB). O limite é {settings.max_audio_file_mb} MB."
+        return f"⚠️ O arquivo de áudio é muito grande ({file_size / (1024*1024):.1f} MB). O limite é {max_mb} MB."
 
     temp_path = None
     try:
@@ -199,7 +200,10 @@ async def _handle_voice_message(
         await telegram_service.send_message(chat_id, full_reply)
 
         if audio_service.should_reply_with_voice(db, user_id):
-            await _send_voice_reply(db, chat_id, reply_text, user_id)
+            tts_ok = await _send_voice_reply(db, chat_id, reply_text, user_id)
+            if tts_ok:
+                voice_log.tts_generated = True
+                db.commit()
 
         return ""
 
@@ -213,11 +217,11 @@ async def _handle_voice_message(
         audio_service.cleanup_temp_file(temp_path)
 
 
-async def _send_voice_reply(db: Session, chat_id: int, text: str, user_id: str) -> None:
+async def _send_voice_reply(db: Session, chat_id: int, text: str, user_id: str) -> bool:
     tts_result = await audio_service.synthesize_speech(text)
     if tts_result.get("error") or not tts_result.get("audio_bytes"):
         logger.warning("TTS failed, skipping voice reply: %s", tts_result.get("error"))
-        return
+        return False
 
     audio_bytes = tts_result["audio_bytes"]
 
@@ -228,6 +232,7 @@ async def _send_voice_reply(db: Session, chat_id: int, text: str, user_id: str) 
             "method": "send_voice",
             "size": len(audio_bytes),
         })
+        return True
     except Exception:
         logger.info("send_voice failed, falling back to send_audio")
         try:
@@ -237,8 +242,10 @@ async def _send_voice_reply(db: Session, chat_id: int, text: str, user_id: str) 
                 "method": "send_audio_fallback",
                 "size": len(audio_bytes),
             })
+            return True
         except Exception:
             logger.exception("send_audio fallback also failed")
+            return False
 
 
 def _ext_from_mime(mime_type: str) -> str:

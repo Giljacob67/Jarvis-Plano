@@ -217,13 +217,17 @@ class TestVoiceResponse:
         mock_transcribe.return_value = {"text": "olá", "raw_json": None, "error": None}
         mock_handle.return_value = "Olá! Tudo bem?"
         mock_should.return_value = True
-        mock_synth.return_value = {"audio_bytes": b"tts_audio_data", "format": "mp3", "error": None}
+        mock_synth.return_value = {"audio_bytes": b"tts_audio_data", "format": "opus", "error": None}
 
         resp = client.post("/webhooks/telegram", json=_make_voice_body(update_id=5040), headers=HEADERS)
         assert resp.status_code == 200
 
         mock_synth.assert_called_once()
         mock_send_voice.assert_called_once()
+
+        voice_log = db_session.query(VoiceMessageLog).first()
+        assert voice_log is not None
+        assert voice_log.tts_generated is True
 
     @patch("app.services.audio_service.should_reply_with_voice")
     @patch("app.routes.telegram.handle_free_text", new_callable=AsyncMock)
