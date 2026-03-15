@@ -1,0 +1,245 @@
+Fase 4 — Gmail real: inbox, busca, threads, resumos e rascunhos
+
+Evolua o projeto existente sem recriar o scaffold e sem quebrar as fases anteriores.
+Não adicionar Node, frontend, Docker ou filas externas.
+Preservar FastAPI, Telegram, OpenAI, memória local, Google OAuth, Calendar e Tasks já funcionais.
+
+Objetivo
+Adicionar integração real com Gmail para 1 usuário com foco em produtividade:
+- listar e-mails importantes
+- buscar e-mails com filtros
+- abrir threads para contexto
+- resumir inbox
+- criar rascunhos
+- criar rascunhos de resposta
+- enviar e-mail somente por ação explícita
+
+Nesta fase, NÃO implementar:
+- apagar e-mails
+- mover para lixo
+- marcar como lido/não lido
+- arquivar
+- labels customizadas
+- push notifications do Gmail
+
+Escopo funcional desta fase
+1. Gmail OAuth integrado ao fluxo Google já existente
+2. leitura real de mensagens e threads
+3. comandos Telegram para inbox e rascunhos
+4. tools da OpenAI para resumir, buscar e rascunhar
+5. envio real apenas por comando explícito e com confirmação simples
+6. tudo em pt-BR
+
+Restrições
+- usar escopos mínimos necessários
+- preferir:
+  https://www.googleapis.com/auth/gmail.readonly
+  https://www.googleapis.com/auth/gmail.compose
+- NÃO usar gmail.modify nesta fase
+- NÃO usar mail.google.com nesta fase
+- user_id continua String em todo o projeto
+- manter timezone padrão America/Sao_Paulo
+- não quebrar os testes existentes
+- todas as chamadas externas devem ser mockadas nos testes
+
+1) Configuração
+Atualizar `.env.example` com:
+GOOGLE_GMAIL_ENABLED=true
+GOOGLE_GMAIL_SCOPES=https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose
+GMAIL_INBOX_QUERY_DEFAULT=in:inbox newer_than:7d
+GMAIL_MAX_LIST_RESULTS=10
+
+Atualizar config para suportar Gmail scopes adicionais sem quebrar Calendar/Tasks.
+Se o projeto já usa uma string de scopes do Google, evoluir de forma compatível.
+
+2) OAuth / escopos
+Expandir o fluxo OAuth Google existente para incluir escopos do Gmail.
+Manter:
+- access_type=offline
+- include_granted_scopes=true
+- state validado no callback
+
+Não quebrar a conta já conectada.
+Se necessário, implementar reconsentimento amigável quando os novos escopos ainda não estiverem presentes.
+
+Criar status mais rico em /auth/google/status informando:
+- connected
+- scopes atuais
+- se Gmail está habilitado
+- se Calendar/Tasks continuam habilitados
+
+3) Serviço Gmail real
+Criar `app/services/google_gmail_service.py` com implementação real usando google-api-python-client.
+
+Métodos mínimos:
+- list_messages(db, user_id, query=None, label_ids=None, max_results=10)
+- get_message(db, user_id, message_id)
+- get_thread(db, user_id, thread_id)
+- summarize_inbox(db, user_id, query=None, max_results=10)
+- create_draft(db, user_id, to, subject, body, thread_id=None)
+- list_drafts(db, user_id, max_results=10)
+- get_draft(db, user_id, draft_id)
+- send_draft(db, user_id, draft_id)
+
+Regras:
+- usar `messages.list` + `messages.get` para leitura
+- usar `threads.get` para recuperar contexto completo de uma conversa
+- criar MIME message corretamente para drafts
+- enviar via draft quando apropriado
+- não implementar anexos nesta fase
+- não implementar HTML complexo nesta fase; texto simples basta
+- registrar operações relevantes em ActionLog
+
+4) Parsing e normalização de e-mail
+Criar helpers em algo como:
+- `app/utils/gmail_utils.py`
+
+Funções úteis:
+- extrair subject
+- extrair from
+- extrair date
+- extrair snippet
+- extrair body de texto simples do payload
+- reduzir conteúdo quoted/reply quando possível
+- formatar lista curta de mensagens para o Telegram
+
+5) Atualizar /me/day
+Expandir `/me/day` e `/myday`:
+- se Gmail estiver conectado, incluir:
+  - e-mails prioritários recentes
+  - contagem de mensagens novas
+  - 3 a 5 itens mais relevantes
+- se Gmail não estiver conectado, manter comportamento atual sem quebrar o resto
+
+Não usar IA para escolher tudo no backend de forma opaca.
+Criar uma heurística simples inicial para “prioritário”, por exemplo:
+- unread
+- inbox
+- não promocional
+- mais recente
+- opcionalmente query configurável
+
+6) Comandos Telegram
+Adicionar estes comandos:
+
+- /inbox
+  lista 5–10 e-mails recentes/importantes
+
+- /emailsearch <consulta>
+  usa query do Gmail API
+  exemplo:
+  /emailsearch from:cliente@empresa.com.br is:unread
+
+- /thread <thread_id>
+  mostra resumo da thread
+
+- /drafts
+  lista rascunhos recentes
+
+- /draftemail <para> | <assunto> | <corpo>
+  cria rascunho novo
+
+- /replydraft <message_id> | <corpo>
+  cria rascunho de resposta dentro da thread da mensagem
+
+- /senddraft <draft_id>
+  envia um rascunho explicitamente
+
+- /inboxsummary
+  faz resumo da inbox recente
+
+Regras:
+- parsing robusto com mensagens de erro claras em pt-BR
+- /senddraft só envia por comando explícito
+- antes de enviar, responder com um resumo curto do draft quando útil
+- se Gmail não estiver conectado, orientar para /connectgoogle
+
+7) OpenAI / tools
+Expandir OpenAIService com tools internas para Gmail:
+- get_inbox_summary(query, max_results)
+- search_emails(query, max_results)
+- get_email_thread(thread_id)
+- create_email_draft(to, subject, body)
+- create_reply_draft(message_id, body)
+- list_email_drafts(limit)
+- send_email_draft(draft_id)
+- get_gmail_connection_status()
+
+Regras:
+- leitura e resumo podem rodar direto
+- criação de draft pode rodar direto
+- envio só pode ocorrer por intenção explícita e segura
+- se o usuário pedir “envie este e-mail” em texto livre, exigir confirmação curta no fluxo da aplicação
+- registrar envio em ActionLog
+- não permitir apagar, arquivar, mover ou alterar labels nesta fase
+
+8) Fluxo de confirmação para envio
+Implementar confirmação mínima para envio vindo de texto livre:
+- se a IA entender que o usuário quer enviar e-mail, criar rascunho primeiro
+- responder com algo como:
+  “Rascunho criado. Para enviar, use /senddraft <id>.”
+- não enviar direto por texto livre nesta fase
+
+Se o usuário usar /senddraft explicitamente, pode enviar.
+
+9) Modelos / banco
+Se necessário, criar tabelas auxiliares:
+- GmailDraftCache opcional
+- GmailMessageCache opcional
+Mas só se realmente ajudar.
+Preferir não complicar o schema sem necessidade.
+
+Garantir ActionLog para:
+- gmail_list
+- gmail_get_message
+- gmail_get_thread
+- gmail_create_draft
+- gmail_send_draft
+
+10) Testes
+Adicionar testes totalmente mockados para:
+- Gmail desconectado -> comandos retornam instrução amigável
+- /inbox
+- /emailsearch
+- /thread
+- /drafts
+- /draftemail
+- /replydraft
+- /senddraft
+- /inboxsummary
+- /me/day com Gmail conectado
+- OpenAI tool calling para Gmail mockado
+- reconsentimento / status de escopos faltando
+
+Manter todos os testes anteriores passando.
+
+11) README
+Atualizar README com:
+- novos escopos Gmail
+- aviso de que Gmail usa escopos mais sensíveis/restritos
+- como reautorizar a conta Google para incluir Gmail
+- como testar /inbox, /emailsearch, /draftemail, /replydraft, /senddraft
+- observação de que push notifications e anexos ficam para fase futura
+- exemplos reais de queries Gmail aceitas
+
+12) Critério de pronto
+Considere concluído quando:
+- consigo reconectar a conta Google com escopos de Gmail
+- /inbox retorna e-mails reais
+- /emailsearch busca e-mails reais
+- /thread mostra contexto real da conversa
+- /draftemail cria rascunho real
+- /replydraft cria rascunho de resposta real na thread
+- /senddraft envia de fato quando chamado explicitamente
+- /inboxsummary resume a inbox recente
+- /myday inclui e-mails quando Gmail estiver conectado
+- testes passam
+- fases anteriores continuam funcionando
+
+No final:
+1. rode a app
+2. rode os testes
+3. me mostre a árvore de arquivos alterados/criados
+4. liste os novos Secrets e escopos
+5. me diga exatamente se preciso reconectar a conta Google
+6. me mostre um checklist curto para validar Gmail no Telegram
