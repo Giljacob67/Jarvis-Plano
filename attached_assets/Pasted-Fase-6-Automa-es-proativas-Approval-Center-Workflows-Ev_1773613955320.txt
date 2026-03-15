@@ -1,0 +1,292 @@
+Fase 6 — Automações proativas + Approval Center + Workflows
+
+Evolua o projeto atual sem recriar scaffold e sem quebrar as fases 1–5.
+Preserve FastAPI, Telegram, OpenAI, memória local, voz no Telegram, Google OAuth, Calendar, Tasks e Gmail.
+
+Objetivo
+Transformar o Jarvis em um assistente proativo e mais “agente”:
+- gerar briefings automáticos
+- enviar lembretes inteligentes
+- executar rotinas programadas
+- manter fila de aprovações para ações sensíveis
+- criar workflows reutilizáveis (playbooks)
+
+Nesta fase, NÃO implementar:
+- browser automation ainda
+- múltiplos usuários
+- frontend web completo
+- execução destrutiva automática sem aprovação
+- WhatsApp/Slack/Discord
+- filas externas
+
+Escopo funcional
+1. scheduler interno para rotinas e verificações periódicas
+2. briefing matinal automático no Telegram
+3. fechamento do dia automático no Telegram
+4. lembretes inteligentes baseados em agenda, tarefas e e-mails
+5. fila de aprovações para ações sensíveis
+6. comandos Telegram para listar/aprovar/rejeitar pendências
+7. playbooks simples e configuráveis
+8. memória organizada por contexto
+9. tudo em pt-BR
+
+Regras de produto
+- leitura, resumo e sugestões podem rodar automaticamente
+- envio de e-mail, criação de evento importante, follow-up automático e qualquer ação sensível devem passar por aprovação
+- o agente nunca deve apagar dados nesta fase
+- toda ação automática ou sugerida deve ficar registrada em ActionLog
+
+1) Config e env
+Adicionar ao config.py e .env.example:
+PROACTIVE_FEATURES_ENABLED=true
+MORNING_BRIEFING_ENABLED=true
+MORNING_BRIEFING_TIME=08:00
+EVENING_REVIEW_ENABLED=true
+EVENING_REVIEW_TIME=18:30
+REMINDER_CHECK_INTERVAL_MINUTES=10
+DEFAULT_TIMEZONE=America/Sao_Paulo
+APPROVALS_ENABLED=true
+MAX_PENDING_APPROVALS=20
+FOLLOWUP_DEFAULT_DAYS=2
+
+2) Modelos / banco
+Criar modelos SQLAlchemy:
+
+RoutineConfig
+- id
+- user_id
+- routine_type
+- is_enabled
+- schedule_time nullable
+- schedule_cron nullable
+- config_json nullable
+- created_at
+- updated_at
+
+PendingApproval
+- id
+- user_id
+- action_type
+- title
+- summary
+- payload_json
+- status (pending, approved, rejected, expired, executed)
+- source
+- created_at
+- updated_at
+- expires_at nullable
+- executed_at nullable
+
+WorkflowRun
+- id
+- user_id
+- workflow_name
+- status
+- input_json
+- output_json nullable
+- created_at
+- updated_at
+
+SuggestionLog
+- id
+- user_id
+- suggestion_type
+- title
+- body
+- source
+- accepted boolean nullable
+- created_at
+
+3) Scheduler
+Implementar scheduler simples dentro da app, sem dependências pesadas e sem filas externas.
+Pode usar abordagem leve e estável para:
+- briefing matinal
+- fechamento do dia
+- checagem periódica de lembretes
+- follow-ups pendentes
+- drafts não enviados
+- eventos próximos
+
+Garantir:
+- inicialização segura no startup
+- não disparar duplicado
+- logs claros
+- fácil desligar por config
+
+4) Serviço proativo
+Criar app/services/proactive_service.py
+
+Métodos mínimos:
+- generate_morning_briefing(db, user_id)
+- generate_evening_review(db, user_id)
+- check_upcoming_events(db, user_id)
+- check_due_tasks(db, user_id)
+- check_followups(db, user_id)
+- check_pending_drafts(db, user_id)
+- create_suggestion(...)
+- maybe_create_approval(...)
+- send_proactive_message(...)
+
+Briefing matinal deve incluir:
+- primeiros eventos do dia
+- tarefas prioritárias
+- e-mails importantes recentes
+- conflito de agenda
+- sugestão do foco principal
+
+Fechamento do dia deve incluir:
+- o que foi concluído
+- o que ficou pendente
+- follow-ups necessários
+- proposta de amanhã
+
+5) Approval Center
+Criar app/services/approval_service.py
+
+Métodos:
+- create_pending_approval(user_id, action_type, title, summary, payload)
+- list_pending_approvals(user_id)
+- approve_pending_approval(user_id, approval_id)
+- reject_pending_approval(user_id, approval_id)
+- execute_approved_action(...)
+
+Tipos iniciais de aprovação:
+- send_email_draft
+- create_followup_task
+- create_calendar_event_from_ai
+- send_proactive_followup_message
+
+Comandos Telegram:
+- /approvals
+- /approve <id>
+- /reject <id>
+
+Regras:
+- texto livre da IA nunca dispara ação sensível diretamente
+- se houver ação sensível, criar pendência
+- o usuário aprova pelo Telegram
+
+6) Workflows / playbooks
+Criar app/services/workflow_service.py
+
+Implementar playbooks iniciais:
+
+a) lead_followup
+- recebe nome/empresa/email
+- cria tarefa
+- rascunha e-mail
+- agenda lembrete de follow-up em X dias
+- opcionalmente cria aprovação para envio do draft
+
+b) meeting_prep
+- pega próximo evento
+- resume contexto do evento
+- lista e-mails/thread relacionados quando houver
+- sugere pauta
+- envia briefing no Telegram antes da reunião
+
+c) inbox_triage
+- pega e-mails prioritários
+- resume
+- sugere respostas
+- cria drafts quando fizer sentido
+- nunca envia sem aprovação
+
+Expor isso no Telegram com comandos simples:
+- /workflow
+- /runworkflow <nome>
+- /playbooks
+
+7) Memória melhorada
+Evoluir MemoryItem sem quebrar compatibilidade:
+- usar categorias mais claras:
+  profile
+  preference
+  project
+  contact
+  routine
+  decision
+  followup
+- criar helper para buscar memória por contexto
+- permitir ao briefing usar memórias de projeto/cliente quando relevante
+
+8) /myday e inteligência
+Expandir /myday:
+- incluir alertas
+- incluir sugestões proativas
+- incluir pendências aguardando aprovação
+- incluir follow-ups sugeridos
+
+Atualizar AssistantService/OpenAIService:
+- tools novas:
+  - get_pending_approvals()
+  - create_approval(...)
+  - run_workflow(name, input)
+  - get_morning_briefing()
+  - get_evening_review()
+  - get_proactive_suggestions()
+- a IA pode sugerir ações e criar aprovações, mas não executar ações sensíveis direto
+
+9) Comandos Telegram
+Adicionar:
+- /briefing
+- /review
+- /approvals
+- /approve <id>
+- /reject <id>
+- /playbooks
+- /runworkflow <nome>
+- /routineon <morning|evening|reminders>
+- /routineoff <morning|evening|reminders>
+- /routinestatus
+
+10) Testes
+Adicionar testes totalmente mockados para:
+- geração de briefing
+- geração de fechamento do dia
+- criação de aprovação
+- listagem de aprovações
+- approve/reject
+- workflow lead_followup
+- workflow meeting_prep
+- workflow inbox_triage
+- lembretes de tarefa vencendo
+- lembrete de evento próximo
+- rotinas on/off
+- /briefing
+- /review
+- /approvals
+- /approve
+- /reject
+
+Todos os testes anteriores continuam passando.
+
+11) README
+Atualizar README com:
+- conceito de rotinas proativas
+- como funcionam aprovações
+- playbooks disponíveis
+- novos comandos Telegram
+- como ativar/desativar rotinas
+- exemplos reais de uso
+- nota clara de que browser automation fica para fase futura
+
+12) Critério de pronto
+Considere concluído quando:
+- eu recebo briefing matinal no Telegram
+- eu recebo fechamento do dia no Telegram
+- o Jarvis detecta e sugere follow-ups e pendências
+- ações sensíveis viram aprovações
+- eu consigo aprovar/rejeitar no Telegram
+- workflows executam corretamente
+- tudo fica registrado no banco
+- fases 1–5 continuam funcionando
+- testes passam
+
+No final:
+1. rode a app
+2. rode os testes
+3. me mostre a árvore de arquivos alterados/criados
+4. liste os novos Secrets/configs
+5. me mostre um checklist curto para validar briefing, approvals e workflows
+6. me diga o que fica faltando para a fase de browser automation
