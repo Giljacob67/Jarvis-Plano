@@ -1,23 +1,170 @@
+import json
 import logging
 from typing import Any
 
+from app.config import settings
+from app.prompts import SYSTEM_PROMPT, format_memories_context
+from app.models.action_log import ActionLog
+
 logger = logging.getLogger(__name__)
+
+TOOLS = [
+    {
+        "type": "function",
+        "name": "get_my_day",
+        "description": "Retorna a agenda, tarefas e e-mails prioritários do dia do usuário",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "type": "function",
+        "name": "save_memory",
+        "description": "Salva uma anotação ou lembrete para o usuário",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "note": {"type": "string", "description": "O conteúdo da anotação"},
+                "category": {
+                    "type": "string",
+                    "description": "Categoria da memória (ex: general, task, reminder)",
+                    "default": "general",
+                },
+            },
+            "required": ["note"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "list_memories",
+        "description": "Lista as memórias/anotações recentes do usuário",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Número máximo de memórias a retornar",
+                    "default": 5,
+                },
+            },
+            "required": [],
+        },
+    },
+]
+
+SENSITIVE_KEYWORDS = [
+    "enviar e-mail", "send email", "apagar", "deletar", "excluir",
+    "cancelar evento", "editar agenda", "modificar evento", "remover",
+]
 
 
 class OpenAIService:
-    # TODO: Implement real OpenAI integration
-    # - Chat completions for natural language processing
-    # - Whisper API for audio transcription
-    # - Function calling for structured command extraction
-    # - Token usage tracking
+    def __init__(self) -> None:
+        self._client: Any = None
 
-    def __init__(self, api_key: str) -> None:
-        self.api_key = api_key
+    def _get_client(self) -> Any:
+        if not settings.openai_api_key:
+            return None
+        if self._client is None:
+            from openai import OpenAI
+            self._client = OpenAI(api_key=settings.openai_api_key)
+        return self._client
 
-    async def chat_completion(self, messages: list[dict[str, str]]) -> str:
-        logger.info("STUB: chat_completion(messages=%d)", len(messages))
-        return "This is a stub response. OpenAI integration not implemented yet."
+    async def generate_reply(
+        self,
+        user_id: str,
+        user_text: str,
+        recent_messages: list[dict[str, str]],
+        memories: list,
+        tool_executor: Any = None,
+        db: Any = None,
+    ) -> str:
+        client = self._get_client()
+        if client is None:
+            return (
+                "A integração com OpenAI ainda não foi configurada. "
+                "Peça ao administrador para definir a OPENAI_API_KEY. "
+                "Enquanto isso, você pode usar /myday, /remember e /memories."
+            )
 
-    async def transcribe_audio(self, audio_data: bytes) -> str:
-        logger.info("STUB: transcribe_audio(size=%d bytes)", len(audio_data))
-        return "Transcription not implemented yet."
+        system_content = SYSTEM_PROMPT
+        mem_ctx = format_memories_context(memories)
+        if mem_ctx:
+            system_content += f"\n\n{mem_ctx}"
+
+        input_messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_content},
+        ]
+        input_messages.extend(recent_messages)
+        input_messages.append({"role": "user", "content": user_text})
+
+        max_rounds = settings.openai_max_tool_rounds
+        for round_num in range(max_rounds + 1):
+            try:
+                kwargs: dict[str, Any] = {
+                    "model": settings.openai_model,
+                    "input": input_messages,
+                }
+                if round_num < max_rounds:
+                    kwargs["tools"] = TOOLS
+                response = client.responses.create(**kwargs)
+            except Exception as e:
+                logger.exception("OpenAI API error: %s", e)
+                return "Desculpe, ocorreu um erro ao processar sua mensagem. Tente novamente em instantes."
+
+            has_tool_calls = False
+            final_text = ""
+
+            for item in response.output:
+                if item.type == "function_call" and tool_executor and round_num < max_rounds:
+                    has_tool_calls = True
+                    tool_name = item.name
+                    try:
+                        tool_args = json.loads(item.arguments) if item.arguments else {}
+                    except json.JSONDecodeError:
+                        tool_args = {}
+
+                    if _is_sensitive_action(tool_name, tool_args, user_text):
+                        tool_result = _log_sensitive_action(db, tool_name, tool_args, user_id)
+                    else:
+                        tool_result = await tool_executor(tool_name, tool_args, db, user_id)
+
+                    input_messages.append(item)
+                    input_messages.append({
+                        "type": "function_call_output",
+                        "call_id": item.call_id,
+                        "output": json.dumps(tool_result, ensure_ascii=False),
+                    })
+
+                elif item.type == "message":
+                    for content_part in item.content:
+                        if content_part.type == "output_text":
+                            final_text += content_part.text
+
+            if not has_tool_calls or round_num >= max_rounds:
+                if final_text:
+                    return final_text
+                break
+
+        return final_text or "Desculpe, não consegui gerar uma resposta. Tente novamente."
+
+
+def _is_sensitive_action(tool_name: str, tool_args: dict, user_text: str) -> bool:
+    text_lower = user_text.lower()
+    return any(kw in text_lower for kw in SENSITIVE_KEYWORDS)
+
+
+def _log_sensitive_action(db: Any, tool_name: str, tool_args: dict, user_id: str) -> dict:
+    if db:
+        log_entry = ActionLog(
+            event_type=f"sensitive_action_blocked:{tool_name}",
+            status="blocked",
+            details_json=json.dumps(
+                {"tool": tool_name, "args": tool_args, "user_id": user_id},
+                ensure_ascii=False,
+            ),
+        )
+        db.add(log_entry)
+        db.commit()
+    return {
+        "status": "blocked",
+        "message": "Esta ação será habilitada numa fase futura com aprovação explícita.",
+    }

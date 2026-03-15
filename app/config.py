@@ -8,6 +8,11 @@ class Settings(BaseSettings):
     app_base_url: str = ""
 
     openai_api_key: str = ""
+    openai_model: str = "gpt-5-mini"
+    openai_max_tool_rounds: int = 3
+    context_max_messages: int = 20
+    context_max_memories: int = 10
+
     telegram_bot_token: str = ""
     telegram_webhook_secret: str = ""
     telegram_allowed_user_id: str = ""

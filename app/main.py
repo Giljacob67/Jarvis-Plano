@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.db import init_db
 from app.routes import api_router
+from app.services import telegram_service
 
 logging.basicConfig(
     level=logging.DEBUG if settings.app_env == "development" else logging.INFO,
@@ -25,14 +26,18 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting Jarvis Pessoal (env=%s, tz=%s)", settings.app_env, settings.timezone)
     init_db()
     logger.info("Database initialized")
+    await telegram_service.start()
+    logger.info("TelegramService httpx client started")
     yield
+    await telegram_service.stop()
+    logger.info("TelegramService httpx client stopped")
     logger.info("Shutting down Jarvis Pessoal")
 
 
 app = FastAPI(
     title="Jarvis Pessoal",
     description="Personal productivity assistant API",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 

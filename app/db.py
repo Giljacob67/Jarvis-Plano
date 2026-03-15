@@ -25,4 +25,5 @@ def get_db():
 
 
 def init_db() -> None:
+    import app.models  # noqa: F401 — ensure all models are registered
     Base.metadata.create_all(bind=engine)

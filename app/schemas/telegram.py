@@ -1,5 +1,11 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, model_validator
 from typing import Optional
+
+
+class TelegramUser(BaseModel):
+    id: int
+    is_bot: bool = False
+    first_name: str = ""
 
 
 class TelegramChat(BaseModel):
@@ -10,14 +16,27 @@ class TelegramChat(BaseModel):
 
 class TelegramVoice(BaseModel):
     file_id: str
+    file_unique_id: str = ""
     duration: int
+    mime_type: Optional[str] = None
+    file_size: Optional[int] = None
 
 
 class TelegramMessage(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     message_id: int
     chat: TelegramChat
+    from_user: Optional[TelegramUser] = None
     text: Optional[str] = None
     voice: Optional[TelegramVoice] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _rename_from(cls, data):
+        if isinstance(data, dict) and "from" in data:
+            data["from_user"] = data.pop("from")
+        return data
 
 
 class TelegramUpdate(BaseModel):
