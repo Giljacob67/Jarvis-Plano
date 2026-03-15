@@ -312,11 +312,12 @@ def _save_message(db: Session, conversation_id: int, role: str, text: str, chann
     return msg
 
 
-async def handle_free_text(db: Session, user_id: str, text: str, raw_update: dict | None = None) -> str:
+async def handle_free_text(db: Session, user_id: str, text: str, raw_update: dict | None = None, channel: str = "telegram") -> str:
     conv = _get_or_create_conversation(db, user_id)
 
     _save_message(
         db, conv.id, role="user", text=text,
+        channel=channel,
         raw_json=json.dumps(raw_update, ensure_ascii=False) if raw_update else None,
     )
 

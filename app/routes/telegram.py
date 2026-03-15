@@ -174,22 +174,11 @@ async def _handle_voice_message(
         if not transcription.strip():
             return "🎤 Recebi seu áudio, mas a transcrição ficou vazia. Pode tentar novamente ou enviar em texto?"
 
-        user_msg = Message(
-            conversation_id=conv.id,
-            role="user",
+        reply_text = await handle_free_text(
+            db, user_id, transcription,
+            raw_update={"voice_log_id": voice_log.id, "source_type": source_type, "file_id": file_id, "duration": duration},
             channel="telegram_voice",
-            text=transcription,
-            raw_json=json.dumps({
-                "voice_log_id": voice_log.id,
-                "source_type": source_type,
-                "file_id": file_id,
-                "duration": duration,
-            }, ensure_ascii=False),
         )
-        db.add(user_msg)
-        db.commit()
-
-        reply_text = await handle_free_text(db, user_id, transcription)
 
         voice_log.processing_status = "completed"
         db.commit()
@@ -224,6 +213,7 @@ async def _send_voice_reply(db: Session, chat_id: int, text: str, user_id: str) 
         return False
 
     audio_bytes = tts_result["audio_bytes"]
+    tts_format = tts_result.get("format", "opus")
 
     try:
         await telegram_service.send_voice(chat_id, audio_bytes)
@@ -235,8 +225,10 @@ async def _send_voice_reply(db: Session, chat_id: int, text: str, user_id: str) 
         return True
     except Exception:
         logger.info("send_voice failed, falling back to send_audio")
+        ext = tts_format if tts_format != "opus" else "ogg"
+        fallback_filename = f"jarvis_response.{ext}"
         try:
-            await telegram_service.send_audio(chat_id, audio_bytes, filename="jarvis_response.mp3")
+            await telegram_service.send_audio(chat_id, audio_bytes, filename=fallback_filename)
             _log_action(db, "audio_reply_generated", "success", {
                 "user_id": user_id,
                 "method": "send_audio_fallback",
