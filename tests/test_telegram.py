@@ -145,3 +145,28 @@ def test_telegram_free_text(client: TestClient, _patch_telegram_send) -> None:
         call_text = _patch_telegram_send.call_args[0][1]
         assert "Olá" in call_text
         mock_gen.assert_called_once()
+
+
+def test_telegram_myday_does_not_call_openai(client: TestClient, _patch_telegram_send) -> None:
+    with patch("app.services.assistant_service._openai_service.generate_reply", new_callable=AsyncMock) as mock_gen:
+        payload = _make_payload(15, text="/myday")
+        response = client.post("/webhooks/telegram", json=payload, headers=VALID_HEADERS)
+        assert response.status_code == 200
+        call_text = _patch_telegram_send.call_args[0][1]
+        assert "Agenda" in call_text or "agenda" in call_text.lower()
+        mock_gen.assert_not_called()
+
+
+def test_telegram_voice_persists_metadata(client: TestClient, _patch_telegram_send, db_session) -> None:
+    payload = _make_payload(16, voice={"file_id": "voice123", "file_unique_id": "uniq", "duration": 10, "mime_type": "audio/ogg"})
+    response = client.post("/webhooks/telegram", json=payload, headers=VALID_HEADERS)
+    assert response.status_code == 200
+    assert response.json()["message"] == "voice_noted"
+
+    from app.models.message import Message
+    msgs = db_session.query(Message).filter(Message.text == "[voice message]").all()
+    assert len(msgs) == 1
+    import json
+    raw = json.loads(msgs[0].raw_json)
+    assert raw["voice"]["file_id"] == "voice123"
+    assert raw["voice"]["duration"] == 10

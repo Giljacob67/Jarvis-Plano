@@ -3,9 +3,16 @@ from typing import Optional
 
 
 class TelegramUser(BaseModel):
-    id: int
+    id: str
     is_bot: bool = False
     first_name: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_id_to_str(cls, data):
+        if isinstance(data, dict) and "id" in data:
+            data["id"] = str(data["id"])
+        return data
 
 
 class TelegramChat(BaseModel):

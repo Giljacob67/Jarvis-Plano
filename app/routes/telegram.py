@@ -1,3 +1,4 @@
+import json
 import logging
 
 from fastapi import APIRouter, Header, Request, Depends
@@ -8,11 +9,14 @@ from app.config import settings
 from app.db import get_db
 from app.schemas.telegram import TelegramUpdate, TelegramWebhookResponse
 from app.models.processed_update import ProcessedTelegramUpdate
+from app.models.conversation import Conversation
+from app.models.message import Message
 from app.services import telegram_service
 from app.services.assistant_service import (
     handle_free_text,
     get_mock_day_overview,
     format_day_overview_text,
+    _get_or_create_conversation,
 )
 from app.services.memory_service import save_memory, list_memories
 
@@ -41,7 +45,7 @@ async def telegram_webhook(
         return TelegramWebhookResponse(ok=True, message="ignored")
 
     if update.message and update.message.from_user:
-        sender_id = str(update.message.from_user.id)
+        sender_id = update.message.from_user.id
         if settings.telegram_allowed_user_id and sender_id != settings.telegram_allowed_user_id:
             logger.info("Ignoring message from unauthorized user_id=%s", sender_id)
             return TelegramWebhookResponse(ok=True, message="ignored")
@@ -64,6 +68,24 @@ async def telegram_webhook(
     msg = update.message
 
     if msg.voice:
+        conv = _get_or_create_conversation(db, user_id)
+        voice_meta = {
+            "type": "voice",
+            "file_id": msg.voice.file_id,
+            "duration": msg.voice.duration,
+            "mime_type": msg.voice.mime_type,
+            "file_size": msg.voice.file_size,
+        }
+        voice_msg = Message(
+            conversation_id=conv.id,
+            role="user",
+            channel="telegram",
+            text="[voice message]",
+            raw_json=json.dumps({"voice": voice_meta, "update_id": update.update_id}, ensure_ascii=False),
+        )
+        db.add(voice_msg)
+        db.commit()
+
         reply_text = (
             "🎤 Recebi seu áudio! A transcrição de voz será implementada na Fase 3. "
             "Por enquanto, envie sua mensagem como texto."
