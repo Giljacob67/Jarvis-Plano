@@ -1,0 +1,191 @@
+Fase 5 — Voz no Telegram: transcrição real + resposta por áudio opcional
+
+Evolua o projeto existente sem recriar scaffold e sem quebrar as fases 1–4.
+Preserve FastAPI, Telegram, OpenAI, memória local, Google OAuth, Calendar, Tasks e Gmail.
+
+Objetivo
+Adicionar suporte real a voz no Telegram para o Jarvis:
+- receber mensagens de voz e áudio
+- baixar o arquivo do Telegram
+- transcrever com OpenAI
+- tratar a transcrição como entrada normal do assistente
+- responder em texto
+- opcionalmente responder também em áudio sintetizado
+- registrar tudo no banco com rastreabilidade
+
+Nesta fase, NÃO implementar ainda:
+- voz em tempo real via WebRTC no navegador
+- chamadas telefônicas / SIP
+- clonagem de voz customizada
+- barge-in / interrupção de fala
+- streaming bidirecional ao vivo
+
+Escopo funcional
+1. receber voice e audio no webhook do Telegram
+2. baixar arquivo do Telegram para processamento temporário
+3. transcrever com OpenAI Audio API
+4. passar a transcrição pelo AssistantService já existente
+5. responder em texto no Telegram
+6. opcionalmente responder também com áudio
+7. registrar metadados, transcrição, erros e custos aproximados
+8. manter tudo em pt-BR
+
+Restrições
+- não quebrar comandos de texto existentes
+- não alterar a fonte de verdade da conversa; continuar usando o banco local
+- manter validação do secret header do Telegram
+- manter idempotência por update_id
+- tratar user_id sempre como String
+- limpar arquivos temporários após o processamento
+- respostas por áudio devem ser opcionais por config
+- se não houver OPENAI_API_KEY, responder de forma amigável sem crashar
+
+1) Dependências e config
+Adicionar ao config.py e ao .env.example:
+OPENAI_TRANSCRIBE_MODEL=gpt-4o-mini-transcribe
+OPENAI_TTS_MODEL=gpt-4o-mini-tts
+VOICE_RESPONSES_ENABLED=false
+VOICE_RESPONSE_VOICE=alloy
+MAX_AUDIO_FILE_MB=20
+TEMP_AUDIO_DIR=/tmp/jarvis_audio
+
+Manter OPENAI_API_KEY e demais configs já existentes.
+
+2) Modelos / banco
+Criar tabela ou ampliar schema para armazenar eventos de áudio.
+Sugestão:
+VoiceMessageLog
+- id
+- user_id
+- conversation_id nullable
+- telegram_update_id
+- telegram_file_id
+- telegram_file_unique_id nullable
+- mime_type nullable
+- duration_seconds nullable
+- original_file_size nullable
+- local_temp_path nullable
+- transcription_text nullable
+- transcription_model nullable
+- tts_generated boolean default false
+- processing_status
+- error_message nullable
+- created_at
+
+Registrar também ActionLog para:
+- telegram_voice_received
+- audio_transcribed
+- audio_transcription_failed
+- audio_reply_generated
+
+3) TelegramService
+Evoluir o TelegramService para:
+- obter metadados de voice e audio
+- implementar get_file(file_id)
+- implementar download_file(file_path)
+- implementar send_voice(chat_id, file_path_or_bytes, caption=None) ou send_audio, conforme ficar mais simples
+- continuar reutilizando um único httpx.AsyncClient
+- não logar tokens nem segredos
+
+4) Serviço de áudio OpenAI
+Criar app/services/audio_service.py
+
+Métodos mínimos:
+- transcribe_file(file_path, language="pt")
+- synthesize_speech(text, voice, output_format="mp3" ou formato adequado ao Telegram)
+- maybe_should_reply_with_voice(user_id, chat_id)
+
+Regras:
+- usar OPENAI_TRANSCRIBE_MODEL configurável
+- usar OPENAI_TTS_MODEL configurável
+- linguagem padrão pt-BR quando aplicável
+- se arquivo exceder limite configurado, responder com mensagem amigável
+- se transcrição falhar, responder com fallback claro ao usuário
+
+5) Fluxo de voz
+Atualizar a rota do webhook Telegram:
+- detectar updates com message.voice ou message.audio
+- validar usuário/autorização como já existe
+- registrar metadados do áudio
+- baixar arquivo temporário
+- transcrever
+- persistir transcrição como Message role=user channel=telegram_voice
+- chamar o mesmo AssistantService usado pelo texto
+- enviar resposta em texto
+- se VOICE_RESPONSES_ENABLED=true, também gerar áudio e enviar
+- apagar temporários ao final, mesmo em erro
+
+6) Reuso do cérebro atual
+Não criar pipeline paralelo de inteligência.
+A entrada de voz deve virar texto e cair no mesmo fluxo já usado por:
+- memória
+- Gmail
+- Calendar
+- Tasks
+- tools do OpenAI
+- logs
+- ActionLog
+
+7) Comandos novos
+Adicionar comandos Telegram:
+- /voiceon -> habilita resposta por áudio para o usuário
+- /voiceoff -> desabilita resposta por áudio
+- /voicestatus -> mostra se respostas por áudio estão ativas
+- /transcribe -> opcional, explica que basta mandar áudio/voice
+
+Se preferir, armazenar essa preferência em MemoryItem ou em campo próprio do User.
+
+8) UX das respostas
+Regras de experiência:
+- sempre responder com texto
+- áudio é complementar, nunca substituto obrigatório
+- quando a transcrição parecer incerta ou vazia, avisar isso de forma honesta
+- se o usuário mandar áudio pedindo criação de tarefa/evento/e-mail, usar o fluxo normal já existente
+
+9) Testes
+Adicionar testes totalmente mockados para:
+- voice recebido com secret válido
+- áudio recebido com secret válido
+- usuário não autorizado com áudio -> 200 ignored
+- update duplicado com áudio -> 200 ignored
+- transcrição com sucesso
+- transcrição falhando
+- AssistantService chamado com a transcrição
+- resposta em texto enviada
+- resposta em áudio enviada quando VOICE_RESPONSES_ENABLED=true
+- limpeza de arquivos temporários
+- /voiceon
+- /voiceoff
+- /voicestatus
+
+Todos os testes sem chamadas externas reais.
+Mockar Telegram download, OpenAI transcribe e OpenAI TTS.
+
+10) README
+Atualizar README com:
+- como funciona voz no Telegram
+- diferenças entre mensagem de voz e áudio
+- novos Secrets/configs
+- como testar enviando nota de voz
+- como ativar/desativar resposta por áudio
+- observação de que voz em tempo real no navegador fica para a próxima fase
+
+11) Critério de pronto
+Considere concluído quando:
+- eu envio uma nota de voz no Telegram
+- o Jarvis transcreve corretamente
+- a transcrição entra no fluxo normal do assistente
+- ele responde em texto
+- opcionalmente responde em áudio quando habilitado
+- tudo fica registrado no banco
+- temporários são limpos
+- fases anteriores continuam funcionando
+- testes passam
+
+No final:
+1. rode a app
+2. rode os testes
+3. me mostre a árvore de arquivos alterados/criados
+4. liste os novos Secrets/configs
+5. me diga exatamente como validar voz no Telegram
+6. me diga o que ficou preparado para uma futura fase realtime web
