@@ -6,11 +6,11 @@ import router from "./routes";
 const JARVIS_HOST = "127.0.0.1";
 const JARVIS_PORT = 8000;
 
-function proxyToJarvis(req: Request, res: Response): void {
+function proxyToJarvis(req: Request, res: Response, jarvisPath: string): void {
   const options: http.RequestOptions = {
     hostname: JARVIS_HOST,
     port: JARVIS_PORT,
-    path: req.url,
+    path: jarvisPath,
     method: req.method,
     headers: { ...req.headers, host: `${JARVIS_HOST}:${JARVIS_PORT}` },
   };
@@ -34,15 +34,18 @@ const app: Express = express();
 
 app.use(cors());
 
-if (process.env.NODE_ENV === "production") {
-  app.use((req: Request, res: Response, next: NextFunction) => {
-    if (!req.path.startsWith("/api")) {
-      proxyToJarvis(req, res);
-    } else {
-      next();
-    }
-  });
-}
+// All /api/* requests except /api/healthz are forwarded to Jarvis Python (port 8000).
+// The /api prefix is stripped before forwarding:
+//   /api/webhooks/telegram  →  /webhooks/telegram
+//   /api/health             →  /health
+//   /api/auth/google/start  →  /auth/google/start
+// Must come BEFORE body parsers so raw body is available for piping.
+app.use("/api", (req: Request, res: Response, next: NextFunction) => {
+  if (req.path === "/healthz") {
+    return next();
+  }
+  proxyToJarvis(req, res, req.url);
+});
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
