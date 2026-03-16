@@ -1,4 +1,17 @@
+import os
+
 from pydantic_settings import BaseSettings
+
+
+def _resolve_base_url(explicit: str) -> str:
+    """Return APP_BASE_URL, falling back to REPLIT_DOMAINS if not set."""
+    if explicit.strip():
+        return explicit.rstrip("/")
+    domains = os.environ.get("REPLIT_DOMAINS", "").strip()
+    if domains:
+        domain = domains.split(",")[0].strip()
+        return f"https://{domain}"
+    return ""
 
 
 class Settings(BaseSettings):
@@ -6,6 +19,10 @@ class Settings(BaseSettings):
     jarvis_database_url: str = "sqlite:///./jarvis.db"
     timezone: str = "America/Sao_Paulo"
     app_base_url: str = ""
+
+    @property
+    def effective_base_url(self) -> str:
+        return _resolve_base_url(self.app_base_url)
 
     openai_api_key: str = ""
     openai_model: str = "gpt-5-mini"
@@ -60,6 +77,15 @@ class Settings(BaseSettings):
         if self.google_gmail_enabled:
             scopes = f"{scopes} {self.google_gmail_scopes}"
         return scopes
+
+    @property
+    def effective_google_redirect_uri(self) -> str:
+        if self.google_redirect_uri.strip():
+            return self.google_redirect_uri
+        base = self.effective_base_url
+        if base:
+            return f"{base}/auth/google/callback"
+        return ""
 
     browser_automation_enabled: bool = False
     browser_headless: bool = True

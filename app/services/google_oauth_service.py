@@ -33,13 +33,13 @@ def _make_flow() -> Flow:
             "client_secret": settings.google_client_secret,
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [settings.google_redirect_uri],
+            "redirect_uris": [settings.effective_google_redirect_uri],
         }
     }
     flow = Flow.from_client_config(
         client_config,
         scopes=_get_scopes(),
-        redirect_uri=settings.google_redirect_uri,
+        redirect_uri=settings.effective_google_redirect_uri,
     )
     return flow
 

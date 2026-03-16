@@ -643,11 +643,12 @@ def _cmd_routine_toggle(db: Session, user_id: str, text: str, enabled: bool) -> 
 
 
 def _cmd_connectgoogle(db: Session, user_id: str) -> str:
-    if not settings.app_base_url:
-        return "⚠️ APP_BASE_URL não está configurado. Peça ao administrador para definir."
+    base = settings.effective_base_url
+    if not base:
+        return "⚠️ URL base não está configurada. Peça ao administrador para definir APP_BASE_URL."
     if not settings.google_client_id:
         return "⚠️ Credenciais Google OAuth não configuradas. Peça ao administrador."
-    auth_link = f"{settings.app_base_url.rstrip('/')}/auth/google/start"
+    auth_link = f"{base}/auth/google/start"
     status = google_oauth_service.get_status(db, user_id)
     if status.get("connected") and not status.get("gmail_enabled"):
         return (

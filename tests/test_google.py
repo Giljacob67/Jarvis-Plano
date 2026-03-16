@@ -49,7 +49,7 @@ def test_telegram_connectgoogle(client: TestClient, _patch_telegram_send) -> Non
     with patch("app.routes.telegram.settings") as mock_settings:
         mock_settings.telegram_webhook_secret = "test-secret"
         mock_settings.telegram_allowed_user_id = "12345"
-        mock_settings.app_base_url = "https://example.com"
+        mock_settings.effective_base_url = "https://example.com"
         mock_settings.google_client_id = "test-id"
         payload = _make_payload(100, text="/connectgoogle")
         response = client.post("/webhooks/telegram", json=payload, headers=VALID_HEADERS)
@@ -62,12 +62,12 @@ def test_telegram_connectgoogle_no_base_url(client: TestClient, _patch_telegram_
     with patch("app.routes.telegram.settings") as mock_settings:
         mock_settings.telegram_webhook_secret = "test-secret"
         mock_settings.telegram_allowed_user_id = "12345"
-        mock_settings.app_base_url = ""
+        mock_settings.effective_base_url = ""
         payload = _make_payload(101, text="/connectgoogle")
         response = client.post("/webhooks/telegram", json=payload, headers=VALID_HEADERS)
         assert response.status_code == 200
         call_text = _patch_telegram_send.call_args[0][1]
-        assert "APP_BASE_URL" in call_text
+        assert "URL base" in call_text or "APP_BASE_URL" in call_text
 
 
 def test_telegram_google_status_disconnected(client: TestClient, _patch_telegram_send) -> None:

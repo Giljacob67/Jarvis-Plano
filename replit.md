@@ -14,6 +14,7 @@ Hybrid workspace: a pnpm monorepo (TypeScript) plus a standalone Python FastAPI 
 - **Bot**: Telegram Bot API via webhooks
 - **Google**: OAuth 2.0 + Calendar API + Tasks API + Gmail API (real data when connected, mock fallback)
 - **Workflow**: `Jarvis Pessoal` — runs `uvicorn app.main:app --host 0.0.0.0 --port 8000`
+- **Deploy**: VM (always-on) deployment via Replit; run `scripts/post_deploy.py` once after publishing to register the Telegram webhook
 - **Voice**: OpenAI Audio API (transcribe + TTS), Telegram voice/audio download and send
 - **Proactive**: Scheduler with morning briefing, evening review, due task/event reminders
 - **Approvals**: Pending approval center for sensitive actions (email send, follow-up, event creation)
