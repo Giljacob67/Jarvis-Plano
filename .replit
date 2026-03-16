@@ -7,14 +7,9 @@ modules = ["nodejs-24", "python-3.12"]
   id = "artifacts/mockup-sandbox"
 
   [deployment]
-  router = "application"
   deploymentTarget = "vm"
-  build = ["bash", "-c", "pip install -r requirements.txt -q"]
+  build = ["bash", "-c", "pip install -r requirements.txt"]
   run = ["bash", "start.sh"]
-
-  [deployment.postBuild]
-  args = ["pnpm", "store", "prune"]
-  env = { "CI" = "true" }
 
   [workflows]
   runButton = "Project"
@@ -61,4 +56,3 @@ expertMode = true
 APP_BASE_URL = "https://anexo-plano.replit.app/api"
 
 [userenv.shared]
-  
