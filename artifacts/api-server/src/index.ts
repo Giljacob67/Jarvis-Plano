@@ -27,8 +27,10 @@ if (process.env.NODE_ENV === "production") {
   delete jarvisEnv["PORT"];
 
   const jarvis = spawn(
-    "uvicorn",
+    "python",
     [
+      "-m",
+      "uvicorn",
       "app.main:app",
       "--host",
       "0.0.0.0",

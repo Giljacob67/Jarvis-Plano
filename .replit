@@ -65,7 +65,7 @@ modules = ["nodejs-24", "python-3.12"]
     TIMEZONE = "America/Sao_Paulo"
     JARVIS_DATABASE_URL = "sqlite:///./jarvis.db"
     BROWSER_AUTOMATION_ENABLED = "false"
-  APP_BASE_URL = "https://anexo-plano.replit.app"
+APP_BASE_URL = "https://anexo-plano.replit.app/api"
 
   [userenv.shared]
   

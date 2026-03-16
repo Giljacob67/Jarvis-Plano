@@ -59,6 +59,10 @@ app.get("/api/health", (_req: Request, res: Response) => {
   proxyToJarvis(_req, res, "/health");
 });
 
+app.use("/api/me", (req: Request, res: Response) => {
+  proxyToJarvis(req, res, `/me${req.url}`);
+});
+
 // ── Node.js Express API (body parsers + router) ───────────────────────────────
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
-set -e
-PORT="${PORT:-8000}"
-exec python -m uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --workers 1
+# In production, Jarvis Pessoal is started by the api-server artifact (index.ts).
+# This script is a keep-alive so the deployment run command stays active.
+exec sleep infinity
