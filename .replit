@@ -1,11 +1,5 @@
 modules = ["nodejs-24", "python-3.12"]
 
-    [[artifacts]]
-    id = "artifacts/api-server"
-
-    [[artifacts]]
-    id = "artifacts/mockup-sandbox"
-
     [deployment]
     deploymentTarget = "autoscale"
     build = ["bash", "-c", "pip install -r requirements.txt"]
@@ -34,6 +28,24 @@ modules = ["nodejs-24", "python-3.12"]
 
     [workflows.workflow.metadata]
     outputType = "webview"
+
+    [[workflows.workflow]]
+    name = "artifacts/api-server: API Server"
+    author = "agent"
+
+    [[workflows.workflow.tasks]]
+    task = "shell.exec"
+    args = "pnpm --filter @workspace/api-server run dev"
+    waitForPort = 8080
+
+    [[workflows.workflow]]
+    name = "artifacts/mockup-sandbox: Component Preview Server"
+    author = "agent"
+
+    [[workflows.workflow.tasks]]
+    task = "shell.exec"
+    args = "pnpm --filter @workspace/mockup-sandbox run dev"
+    waitForPort = 8081
 
     [agent]
     stack = "PNPM_WORKSPACE"
