@@ -1,63 +1,60 @@
 modules = ["nodejs-24", "python-3.12"]
 
-[[artifacts]]
-id = "artifacts/api-server"
+  [[artifacts]]
+  id = "artifacts/api-server"
 
-[[artifacts]]
-id = "artifacts/mockup-sandbox"
+  [[artifacts]]
+  id = "artifacts/mockup-sandbox"
 
-[deployment]
-router = "application"
-deploymentTarget = "vm"
-run = ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+  [deployment]
+  router = "application"
+  deploymentTarget = "vm"
+  run = ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
 
-[deployment.postBuild]
-args = ["pnpm", "store", "prune"]
-env = { "CI" = "true" }
+  [deployment.postBuild]
+  args = ["pnpm", "store", "prune"]
+  env = { "CI" = "true" }
 
-[workflows]
-runButton = "Project"
+  [workflows]
+  runButton = "Project"
 
-[[workflows.workflow]]
-name = "Project"
-mode = "parallel"
-author = "agent"
+  [[workflows.workflow]]
+  name = "Project"
+  mode = "parallel"
+  author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Jarvis Pessoal"
+  [[workflows.workflow.tasks]]
+  task = "workflow.run"
+  args = "Jarvis Pessoal"
 
-[[workflows.workflow]]
-name = "Jarvis Pessoal"
-author = "agent"
+  [[workflows.workflow]]
+  name = "Jarvis Pessoal"
+  author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "uvicorn app.main:app --host 0.0.0.0 --port 8000"
-waitForPort = 8000
+  [[workflows.workflow.tasks]]
+  task = "shell.exec"
+  args = "uvicorn app.main:app --host 0.0.0.0 --port 8000"
+  waitForPort = 8000
 
-[workflows.workflow.metadata]
-outputType = "webview"
+  [workflows.workflow.metadata]
+  outputType = "webview"
 
-[agent]
-stack = "PNPM_WORKSPACE"
-expertMode = true
+  [agent]
+  stack = "PNPM_WORKSPACE"
+  expertMode = true
 
-[postMerge]
-path = "scripts/post-merge.sh"
-timeoutMs = 20000
+  [postMerge]
+  path = "scripts/post-merge.sh"
+  timeoutMs = 20000
 
-[nix]
-channel = "stable-25_05"
+  [nix]
+  channel = "stable-25_05"
 
-[userenv]
+  [userenv]
 
-[userenv.production]
-APP_ENV = "production"
-TIMEZONE = "America/Sao_Paulo"
-JARVIS_DATABASE_URL = "sqlite:///./jarvis.db"
-BROWSER_AUTOMATION_ENABLED = "false"
-
-[userenv.shared]
-TELEGRAM_WEBHOOK_SECRET = "8479ea366333070ddd114467b1215dddf95cc50ea6ba507e"
-GOOGLE_ENCRYPTION_KEY = "c1094721ca148c25c222557e2ef67b4bccbb3d1e7919985791dd0b1fd4853970"
+  [userenv.production]
+  APP_ENV = "production"
+  TIMEZONE = "America/Sao_Paulo"
+  JARVIS_DATABASE_URL = "sqlite:///./jarvis.db"
+  BROWSER_AUTOMATION_ENABLED = "false"
+  
