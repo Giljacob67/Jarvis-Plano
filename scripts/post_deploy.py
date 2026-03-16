@@ -5,18 +5,22 @@ Run this once after publishing the app for the first time, or whenever
 the deployment URL changes.
 
 Usage:
-    python scripts/post_deploy.py
+    APP_BASE_URL=https://your-slug.replit.app python scripts/post_deploy.py
 
 What it does:
-  1. Auto-detects the deployment URL (APP_BASE_URL or REPLIT_DOMAINS)
+  1. Uses APP_BASE_URL (or auto-detects from REPLIT_DOMAINS as fallback)
   2. Hits /health to confirm the server is up
-  3. Registers the Telegram webhook
+  3. Registers the Telegram webhook pointing to the given URL
+
+IMPORTANT: Set APP_BASE_URL to your PRODUCTION URL (*.replit.app), not the
+dev URL (*.picard.replit.dev). The production URL is shown in the Deployments
+tab after publishing.
 
 Required env vars:
     TELEGRAM_BOT_TOKEN
-    TELEGRAM_WEBHOOK_SECRET  (recommended)
 Optional:
-    APP_BASE_URL             (auto-detected from REPLIT_DOMAINS if not set)
+    APP_BASE_URL             (strongly recommended — production URL)
+    TELEGRAM_WEBHOOK_SECRET  (auto-read from environment if set)
 """
 
 import os
@@ -40,7 +44,7 @@ def check_health(base_url: str) -> bool:
     url = f"{base_url}/health"
     print(f"Checking health: {url}")
     try:
-        resp = httpx.get(url, timeout=15.0)
+        resp = httpx.get(url, timeout=15.0, verify=False)
         data = resp.json()
         status = data.get("status", "unknown")
         print(f"  Status: {resp.status_code} — {status}")
