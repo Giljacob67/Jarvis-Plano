@@ -233,6 +233,153 @@ TOOLS = [
     },
     {
         "type": "function",
+        "name": "browser_start_session",
+        "description": "Inicia uma sessão de browser para automação supervisionada. O domínio deve estar na lista de permissões.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "URL inicial a abrir"},
+            },
+            "required": ["url"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "browser_open_url",
+        "description": "Navega para uma URL dentro de uma sessão de browser ativa.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "ID da sessão de browser"},
+                "url": {"type": "string", "description": "URL a navegar"},
+            },
+            "required": ["session_id", "url"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "browser_capture_screenshot",
+        "description": "Captura uma screenshot da página atual e salva como artefato.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "ID da sessão de browser"},
+            },
+            "required": ["session_id"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "browser_extract_text",
+        "description": "Extrai o texto visível da página atual do browser.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "ID da sessão de browser"},
+            },
+            "required": ["session_id"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "browser_click",
+        "description": "Clica em um elemento da página usando seletor CSS. Ações sensíveis (botões de pagamento, exclusão etc.) requerem aprovação.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "ID da sessão de browser"},
+                "selector": {"type": "string", "description": "Seletor CSS do elemento"},
+            },
+            "required": ["session_id", "selector"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "browser_fill",
+        "description": "Preenche um campo de formulário com um valor.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "ID da sessão de browser"},
+                "selector": {"type": "string", "description": "Seletor CSS do campo"},
+                "value": {"type": "string", "description": "Valor a preencher"},
+            },
+            "required": ["session_id", "selector", "value"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "browser_select_option",
+        "description": "Seleciona uma opção em um elemento <select>.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "ID da sessão de browser"},
+                "selector": {"type": "string", "description": "Seletor CSS do <select>"},
+                "value": {"type": "string", "description": "Valor da opção a selecionar"},
+            },
+            "required": ["session_id", "selector", "value"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "browser_wait_for_selector",
+        "description": "Aguarda um elemento aparecer na página.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "ID da sessão de browser"},
+                "selector": {"type": "string", "description": "Seletor CSS a aguardar"},
+                "timeout_ms": {"type": "integer", "description": "Timeout em ms (opcional)"},
+            },
+            "required": ["session_id", "selector"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "browser_download_file",
+        "description": "Faz download de um arquivo clicando em um elemento da página. O arquivo é salvo e registrado como artefato.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "ID da sessão de browser"},
+                "trigger_selector": {"type": "string", "description": "Seletor CSS do botão/link de download"},
+            },
+            "required": ["session_id", "trigger_selector"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "browser_get_page_summary",
+        "description": "Retorna URL, título e texto resumido da página atual do browser.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "ID da sessão de browser"},
+            },
+            "required": ["session_id"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "browser_list_sessions",
+        "description": "Lista as sessões de browser do usuário (ativas e recentes).",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "type": "function",
+        "name": "browser_close_session",
+        "description": "Encerra uma sessão de browser ativa.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "ID da sessão a encerrar"},
+            },
+            "required": ["session_id"],
+        },
+    },
+    {
+        "type": "function",
         "name": "get_pending_approvals",
         "description": "Lista aprovações pendentes do usuário",
         "parameters": {"type": "object", "properties": {}, "required": []},

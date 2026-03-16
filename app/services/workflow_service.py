@@ -14,6 +14,30 @@ from app.services.memory_service import save_memory
 logger = logging.getLogger(__name__)
 
 AVAILABLE_PLAYBOOKS = {
+    "website_research": {
+        "name": "website_research",
+        "description": "Abre uma URL, captura screenshot e extrai texto resumido da página",
+        "params": "url",
+        "example": "/runworkflow website_research | https://example.com",
+    },
+    "form_prep": {
+        "name": "form_prep",
+        "description": "Abre uma página, preenche campos de formulário e aguarda aprovação antes de submeter",
+        "params": "url | campo1=valor1 | campo2=valor2",
+        "example": "/runworkflow form_prep | https://example.com/form | name=João | email=joao@x.com",
+    },
+    "portal_check": {
+        "name": "portal_check",
+        "description": "Abre um portal, navega e extrai dados — pausa se detectar login",
+        "params": "url",
+        "example": "/runworkflow portal_check | https://meuportal.com.br",
+    },
+    "file_collect": {
+        "name": "file_collect",
+        "description": "Abre uma página, faz download de arquivo e registra como artefato",
+        "params": "url | seletor_download",
+        "example": "/runworkflow file_collect | https://example.com/relatorio | a.download-btn",
+    },
     "lead_followup": {
         "name": "lead_followup",
         "description": "Cria tarefa, rascunho de e-mail e lembrete de follow-up para um lead",
@@ -71,7 +95,15 @@ async def run_workflow(db: Session, user_id: str, workflow_name: str, params: li
 
     params = params or []
 
-    if workflow_name == "lead_followup":
+    if workflow_name == "website_research":
+        return await _run_website_research(db, user_id, params)
+    elif workflow_name == "form_prep":
+        return await _run_form_prep(db, user_id, params)
+    elif workflow_name == "portal_check":
+        return await _run_portal_check(db, user_id, params)
+    elif workflow_name == "file_collect":
+        return await _run_file_collect(db, user_id, params)
+    elif workflow_name == "lead_followup":
         return await _run_lead_followup(db, user_id, params)
     elif workflow_name == "meeting_prep":
         return await _run_meeting_prep(db, user_id, params)
@@ -79,6 +111,243 @@ async def run_workflow(db: Session, user_id: str, workflow_name: str, params: li
         return await _run_inbox_triage(db, user_id, params)
 
     return "❌ Workflow não implementado."
+
+
+async def _run_website_research(db: Session, user_id: str, params: list[str]) -> str:
+    if not params:
+        return (
+            "❌ Parâmetros insuficientes.\n"
+            "Uso: /runworkflow website_research | https://example.com"
+        )
+    url = params[0].strip()
+    run = _create_workflow_run(db, user_id, "website_research", {"url": url})
+
+    try:
+        from app.services import browser_service
+        result = await browser_service.start_session(db, user_id, url)
+        if "error" in result:
+            _complete_workflow_run(db, run, "failed", result)
+            return f"❌ {result['error']}"
+        session_id = result["session_id"]
+
+        nav = await browser_service.open_url(db, user_id, session_id, url)
+        if "error" in nav:
+            await browser_service.close_session(db, user_id, session_id, reason="workflow_error")
+            _complete_workflow_run(db, run, "failed", nav)
+            return f"❌ {nav['error']}"
+        if nav.get("status") == "paused_for_login":
+            _complete_workflow_run(db, run, "paused", nav)
+            return nav["message"]
+
+        screen = await browser_service.capture_screenshot(db, user_id, session_id)
+        text_result = await browser_service.extract_visible_text(db, user_id, session_id)
+
+        await browser_service.close_session(db, user_id, session_id, reason="workflow_done")
+
+        lines = [
+            "🔍 *Workflow: Website Research*\n",
+            f"🌐 URL: {url}",
+            f"📄 Título: {nav.get('title', '?')}\n",
+        ]
+        if "error" not in screen:
+            lines.append(f"📸 Screenshot salvo: `{screen.get('file_path', '')}`")
+        if "error" not in text_result:
+            lines.append(f"\n📝 *Conteúdo resumido:*\n{text_result.get('text', '')[:1500]}")
+        else:
+            lines.append(f"⚠️ Não foi possível extrair texto: {text_result.get('error', '')}")
+
+        output_msg = "\n".join(lines)
+        _complete_workflow_run(db, run, "completed", {"message": output_msg})
+        _log_action(db, "workflow_completed", "success", {"workflow": "website_research", "user_id": user_id})
+        return output_msg
+
+    except Exception as e:
+        logger.exception("website_research workflow failed")
+        _complete_workflow_run(db, run, "failed", {"error": str(e)})
+        return f"❌ Erro no workflow website_research: {e}"
+
+
+async def _run_form_prep(db: Session, user_id: str, params: list[str]) -> str:
+    if not params:
+        return (
+            "❌ Parâmetros insuficientes.\n"
+            "Uso: /runworkflow form_prep | url | campo1=valor1 | campo2=valor2"
+        )
+    url = params[0].strip()
+    fields: dict[str, str] = {}
+    for p in params[1:]:
+        if "=" in p:
+            k, _, v = p.partition("=")
+            fields[k.strip()] = v.strip()
+
+    run = _create_workflow_run(db, user_id, "form_prep", {"url": url, "fields": fields})
+
+    try:
+        from app.services import browser_service
+        result = await browser_service.start_session(db, user_id, url)
+        if "error" in result:
+            _complete_workflow_run(db, run, "failed", result)
+            return f"❌ {result['error']}"
+        session_id = result["session_id"]
+
+        nav = await browser_service.open_url(db, user_id, session_id, url)
+        if "error" in nav:
+            await browser_service.close_session(db, user_id, session_id, reason="workflow_error")
+            _complete_workflow_run(db, run, "failed", nav)
+            return f"❌ {nav['error']}"
+        if nav.get("status") == "paused_for_login":
+            _complete_workflow_run(db, run, "paused", nav)
+            return nav["message"]
+
+        fill_results = []
+        for selector, value in fields.items():
+            fr = await browser_service.fill(db, user_id, session_id, selector, value)
+            fill_err = fr.get("error", "")
+            fill_icon = "✅" if "error" not in fr else f"❌ {fill_err}"
+            fill_results.append(f"  • `{selector}`: {fill_icon}")
+
+        screen = await browser_service.capture_screenshot(db, user_id, session_id)
+
+        from app.services.approval_service import create_pending_approval
+        approval = create_pending_approval(
+            db, user_id,
+            action_type="browser_submit_form",
+            title=f"Submeter formulário em {url}",
+            summary=f"Campos preenchidos: {list(fields.keys())}\nURL: {url}",
+            payload={"session_id": session_id, "action_type": "browser_submit_form",
+                     "selector": "button[type=submit]", "value": None,
+                     "current_url": nav.get("url", url), "screenshot_path": screen.get("file_path")},
+            source="workflow:form_prep",
+        )
+
+        lines = [
+            "📋 *Workflow: Form Prep*\n",
+            f"🌐 URL: {url}",
+            f"📄 Título: {nav.get('title', '?')}\n",
+            "✏️ *Campos preenchidos:*",
+        ]
+        lines.extend(fill_results)
+        if approval:
+            lines.append(f"\n⏳ Aguardando aprovação #{approval.id} para submeter o formulário.")
+            lines.append(f"Use /approve {approval.id} para confirmar ou /reject {approval.id} para cancelar.")
+        else:
+            lines.append("\n⚠️ Não foi possível criar aprovação para submissão. Sessão mantida aberta.")
+
+        output_msg = "\n".join(lines)
+        _complete_workflow_run(db, run, "pending_approval", {"message": output_msg})
+        _log_action(db, "workflow_completed", "success", {"workflow": "form_prep", "user_id": user_id})
+        return output_msg
+
+    except Exception as e:
+        logger.exception("form_prep workflow failed")
+        _complete_workflow_run(db, run, "failed", {"error": str(e)})
+        return f"❌ Erro no workflow form_prep: {e}"
+
+
+async def _run_portal_check(db: Session, user_id: str, params: list[str]) -> str:
+    if not params:
+        return (
+            "❌ Parâmetros insuficientes.\n"
+            "Uso: /runworkflow portal_check | https://meuportal.com.br"
+        )
+    url = params[0].strip()
+    run = _create_workflow_run(db, user_id, "portal_check", {"url": url})
+
+    try:
+        from app.services import browser_service
+        result = await browser_service.start_session(db, user_id, url)
+        if "error" in result:
+            _complete_workflow_run(db, run, "failed", result)
+            return f"❌ {result['error']}"
+        session_id = result["session_id"]
+
+        nav = await browser_service.open_url(db, user_id, session_id, url)
+        if "error" in nav:
+            await browser_service.close_session(db, user_id, session_id, reason="workflow_error")
+            _complete_workflow_run(db, run, "failed", nav)
+            return f"❌ {nav['error']}"
+
+        if nav.get("status") == "paused_for_login":
+            _complete_workflow_run(db, run, "paused", nav)
+            return nav["message"]
+
+        text_result = await browser_service.extract_visible_text(db, user_id, session_id)
+        screen = await browser_service.capture_screenshot(db, user_id, session_id)
+        await browser_service.close_session(db, user_id, session_id, reason="workflow_done")
+
+        lines = [
+            "🏢 *Workflow: Portal Check*\n",
+            f"🌐 URL: {url}",
+            f"📄 Título: {nav.get('title', '?')}\n",
+        ]
+        if "error" not in screen:
+            lines.append(f"📸 Screenshot: `{screen.get('file_path', '')}`")
+        if "error" not in text_result:
+            lines.append(f"\n📝 *Dados extraídos:*\n{text_result.get('text', '')[:1500]}")
+        else:
+            lines.append(f"⚠️ {text_result.get('error', '')}")
+
+        output_msg = "\n".join(lines)
+        _complete_workflow_run(db, run, "completed", {"message": output_msg})
+        _log_action(db, "workflow_completed", "success", {"workflow": "portal_check", "user_id": user_id})
+        return output_msg
+
+    except Exception as e:
+        logger.exception("portal_check workflow failed")
+        _complete_workflow_run(db, run, "failed", {"error": str(e)})
+        return f"❌ Erro no workflow portal_check: {e}"
+
+
+async def _run_file_collect(db: Session, user_id: str, params: list[str]) -> str:
+    if len(params) < 2:
+        return (
+            "❌ Parâmetros insuficientes.\n"
+            "Uso: /runworkflow file_collect | https://example.com/relatorio | a.download-btn"
+        )
+    url = params[0].strip()
+    trigger_selector = params[1].strip()
+    run = _create_workflow_run(db, user_id, "file_collect", {"url": url, "selector": trigger_selector})
+
+    try:
+        from app.services import browser_service
+        result = await browser_service.start_session(db, user_id, url)
+        if "error" in result:
+            _complete_workflow_run(db, run, "failed", result)
+            return f"❌ {result['error']}"
+        session_id = result["session_id"]
+
+        nav = await browser_service.open_url(db, user_id, session_id, url)
+        if "error" in nav:
+            await browser_service.close_session(db, user_id, session_id, reason="workflow_error")
+            _complete_workflow_run(db, run, "failed", nav)
+            return f"❌ {nav['error']}"
+        if nav.get("status") == "paused_for_login":
+            _complete_workflow_run(db, run, "paused", nav)
+            return nav["message"]
+
+        dl = await browser_service.download_file(db, user_id, session_id, trigger_selector)
+        await browser_service.close_session(db, user_id, session_id, reason="workflow_done")
+
+        if "error" in dl:
+            _complete_workflow_run(db, run, "failed", dl)
+            return f"❌ Erro ao baixar arquivo: {dl['error']}"
+
+        lines = [
+            "📥 *Workflow: File Collect*\n",
+            f"🌐 URL: {url}",
+            f"✅ Arquivo baixado: `{dl.get('file_path', '')}`",
+            f"📦 Tamanho: {dl.get('size_bytes', '?')} bytes",
+            f"🗂 Artefato registrado (ID: {dl.get('artifact_id', '?')})",
+        ]
+        output_msg = "\n".join(lines)
+        _complete_workflow_run(db, run, "completed", {"message": output_msg, "file_path": dl.get("file_path")})
+        _log_action(db, "workflow_completed", "success", {"workflow": "file_collect", "user_id": user_id})
+        return output_msg
+
+    except Exception as e:
+        logger.exception("file_collect workflow failed")
+        _complete_workflow_run(db, run, "failed", {"error": str(e)})
+        return f"❌ Erro no workflow file_collect: {e}"
 
 
 async def _run_lead_followup(db: Session, user_id: str, params: list[str]) -> str:

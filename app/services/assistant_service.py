@@ -328,6 +328,108 @@ async def tool_executor(tool_name: str, tool_args: dict[str, Any], db: Session |
         from app.services import proactive_service
         return await proactive_service.get_proactive_suggestions(db, user_id)
 
+    if tool_name == "browser_start_session":
+        if not db:
+            return {"error": "Banco não disponível"}
+        from app.services import browser_service
+        url = tool_args.get("url", "")
+        return await browser_service.start_session(db, user_id, url)
+
+    if tool_name == "browser_open_url":
+        if not db:
+            return {"error": "Banco não disponível"}
+        from app.services import browser_service
+        session_id = tool_args.get("session_id", "")
+        url = tool_args.get("url", "")
+        return await browser_service.open_url(db, user_id, session_id, url)
+
+    if tool_name == "browser_capture_screenshot":
+        if not db:
+            return {"error": "Banco não disponível"}
+        from app.services import browser_service
+        session_id = tool_args.get("session_id", "")
+        return await browser_service.capture_screenshot(db, user_id, session_id)
+
+    if tool_name == "browser_extract_text":
+        if not db:
+            return {"error": "Banco não disponível"}
+        from app.services import browser_service
+        session_id = tool_args.get("session_id", "")
+        return await browser_service.extract_visible_text(db, user_id, session_id)
+
+    if tool_name == "browser_click":
+        if not db:
+            return {"error": "Banco não disponível"}
+        from app.services import browser_service
+        session_id = tool_args.get("session_id", "")
+        selector = tool_args.get("selector", "")
+        return await browser_service.click(db, user_id, session_id, selector)
+
+    if tool_name == "browser_fill":
+        if not db:
+            return {"error": "Banco não disponível"}
+        from app.services import browser_service
+        session_id = tool_args.get("session_id", "")
+        selector = tool_args.get("selector", "")
+        value = tool_args.get("value", "")
+        return await browser_service.fill(db, user_id, session_id, selector, value)
+
+    if tool_name == "browser_select_option":
+        if not db:
+            return {"error": "Banco não disponível"}
+        from app.services import browser_service
+        session_id = tool_args.get("session_id", "")
+        selector = tool_args.get("selector", "")
+        value = tool_args.get("value", "")
+        return await browser_service.select_option(db, user_id, session_id, selector, value)
+
+    if tool_name == "browser_wait_for_selector":
+        if not db:
+            return {"error": "Banco não disponível"}
+        from app.services import browser_service
+        session_id = tool_args.get("session_id", "")
+        selector = tool_args.get("selector", "")
+        timeout_ms = tool_args.get("timeout_ms")
+        return await browser_service.wait_for_selector(db, user_id, session_id, selector, timeout_ms)
+
+    if tool_name == "browser_download_file":
+        if not db:
+            return {"error": "Banco não disponível"}
+        from app.services import browser_service
+        session_id = tool_args.get("session_id", "")
+        trigger_selector = tool_args.get("trigger_selector", "")
+        return await browser_service.download_file(db, user_id, session_id, trigger_selector)
+
+    if tool_name == "browser_get_page_summary":
+        if not db:
+            return {"error": "Banco não disponível"}
+        from app.services import browser_service
+        session_id = tool_args.get("session_id", "")
+        return await browser_service.get_page_summary(db, user_id, session_id)
+
+    if tool_name == "browser_list_sessions":
+        if not db:
+            return []
+        from app.services import browser_service
+        sessions = browser_service.list_sessions(db, user_id)
+        return [
+            {
+                "session_id": s.session_id,
+                "status": s.status,
+                "current_url": s.current_url,
+                "steps_taken": s.steps_taken,
+                "created_at": str(s.created_at),
+            }
+            for s in sessions
+        ]
+
+    if tool_name == "browser_close_session":
+        if not db:
+            return {"error": "Banco não disponível"}
+        from app.services import browser_service
+        session_id = tool_args.get("session_id", "")
+        return await browser_service.close_session(db, user_id, session_id)
+
     return {"error": f"Tool '{tool_name}' não reconhecida"}
 
 

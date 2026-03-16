@@ -27,6 +27,9 @@ VALID_ACTION_TYPES = [
     "create_followup_task",
     "create_calendar_event_from_ai",
     "send_proactive_followup_message",
+    "browser_click",
+    "browser_fill",
+    "browser_submit_form",
 ]
 
 
@@ -266,5 +269,13 @@ async def _dispatch_action(db: Session, user_id: str, action_type: str, payload:
 
     if action_type == "send_proactive_followup_message":
         return {"status": "sent", "message": payload.get("message", "")}
+
+    if action_type in ("browser_click", "browser_fill", "browser_submit_form"):
+        from app.services import browser_service
+        session_id = payload.get("session_id", "")
+        approval_id_val = payload.get("approval_id", 0)
+        return await browser_service.approve_and_execute_browser_action(
+            db, user_id, session_id, approval_id_val, payload
+        )
 
     return {"error": f"Tipo de ação '{action_type}' não suportado."}

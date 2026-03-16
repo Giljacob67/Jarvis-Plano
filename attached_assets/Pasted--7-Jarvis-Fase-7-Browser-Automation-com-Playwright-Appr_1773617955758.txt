@@ -1,0 +1,309 @@
+#7 - Jarvis Fase 7 — Browser Automation com Playwright + Approval Gates
+What & Why
+Adicionar navegação e automação real de navegador ao Jarvis usando Playwright, com foco em tarefas supervisionadas e seguras: abrir sites, navegar páginas, preencher formulários, capturar dados, baixar arquivos e executar fluxos guiados. Toda ação sensível ou irreversível deve passar por aprovação explícita. O objetivo é aproximar o Jarvis de um agente estilo OpenClaw sem perder controle, auditabilidade e segurança. As Fases 1–6 devem continuar intactas.
+
+Done looks like
+O Jarvis consegue abrir páginas em um navegador controlado e executar steps básicos de automação
+/playbooks passa a incluir workflows com browser automation
+/approve e /reject controlam ações sensíveis vindas de fluxos web
+O agente consegue:
+- abrir URL
+- fazer screenshot
+- extrair texto visível
+- clicar em elementos
+- preencher campos
+- selecionar opções
+- baixar arquivos
+- esperar navegação de forma robusta
+Toda ação web fica registrada em ActionLog
+Toda sessão de navegador é rastreada no banco
+O agente pede aprovação antes de:
+- enviar formulário
+- clicar em ações potencialmente irreversíveis
+- confirmar compras, pagamentos, exclusões, submissões finais
+O agente nunca tenta contornar CAPTCHA, 2FA, paywall ou mecanismos de segurança
+Quando login manual for necessário, o fluxo pausa e orienta o usuário
+Existem comandos Telegram para iniciar, acompanhar, aprovar e encerrar sessões de navegador
+Todos os testes novos passam; 149 testes anteriores continuam passando
+
+Out of scope
+Bypass de CAPTCHA, 2FA ou qualquer controle de segurança
+Compras automáticas, pagamentos ou transferências sem aprovação
+Execução destrutiva silenciosa
+Navegação invisível para burlar sites
+Múltiplos usuários simultâneos
+Browser em dispositivo do usuário
+Extensão de navegador
+RPA desktop fora do browser
+WhatsApp/Slack/Discord
+
+Constraints
+Usar Playwright Python oficial
+Executar browser automation apenas em allowlist de domínios configuráveis
+Toda sessão deve ser efêmera e isolada
+Não armazenar senhas em texto puro
+Não salvar cookies persistentes por padrão
+Permitir pausa para login manual quando necessário
+Toda ação sensível exige PendingApproval
+Toda navegação deve ter timeout configurável
+Toda resposta ao usuário em pt-BR
+Respeitar robots, segurança e controles dos sites; não implementar evasão
+User_id sempre String
+Timezone padrão America/Sao_Paulo
+Todos os testes sem chamadas externas reais; mockar Playwright
+
+Tasks
+Config e env — Adicionar ao config.py e .env.example:
+BROWSER_AUTOMATION_ENABLED=true
+BROWSER_HEADLESS=true
+BROWSER_DEFAULT_TIMEOUT_MS=15000
+BROWSER_NAVIGATION_TIMEOUT_MS=30000
+BROWSER_ALLOWED_DOMAINS=
+BROWSER_SESSION_TTL_MINUTES=20
+BROWSER_DOWNLOAD_DIR=/tmp/jarvis_downloads
+BROWSER_SCREENSHOT_DIR=/tmp/jarvis_screens
+BROWSER_MAX_STEPS_PER_RUN=25
+BROWSER_REQUIRE_APPROVAL_FOR_SUBMIT=true
+BROWSER_ALLOW_FILE_DOWNLOADS=true
+
+Modelo de sessão web — Criar modelos SQLAlchemy:
+BrowserSession
+- id
+- user_id
+- status (active, paused_for_login, waiting_approval, completed, failed, expired)
+- start_url nullable
+- current_url nullable
+- domain nullable
+- workflow_name nullable
+- step_count
+- last_screenshot_path nullable
+- last_page_title nullable
+- last_error nullable
+- created_at
+- updated_at
+- expires_at
+
+BrowserStepLog
+- id
+- session_id
+- step_index
+- action_type
+- target nullable
+- value nullable
+- status
+- screenshot_path nullable
+- page_url nullable
+- result_summary nullable
+- created_at
+
+BrowserArtifact
+- id
+- session_id
+- artifact_type (screenshot, download, html_snapshot, text_extract)
+- file_path
+- metadata_json nullable
+- created_at
+
+Registrar tudo em app/models/__init__.py para create_all no startup.
+
+Serviço principal de browser — Criar app/services/browser_service.py com Playwright real.
+Implementar:
+- start_session(user_id, start_url=None, workflow_name=None)
+- close_session(session_id)
+- get_session(session_id)
+- list_sessions(user_id)
+- open_url(session_id, url)
+- capture_screenshot(session_id)
+- extract_visible_text(session_id, max_chars=4000)
+- click(session_id, selector)
+- fill(session_id, selector, value)
+- select_option(session_id, selector, value)
+- press(session_id, selector, key)
+- wait_for_selector(session_id, selector)
+- download_file(session_id, selector)
+- get_page_summary(session_id)
+- maybe_require_approval(action_type, url, selector, value)
+
+Regras:
+- usar um contexto/browser isolado por sessão
+- respeitar allowlist de domínio
+- bloquear navegação para domínios não permitidos
+- registrar screenshots antes/depois de ações importantes
+- encerrar sessão automaticamente ao expirar TTL
+- não persistir storage state por padrão
+- deixar TODO claro para futura opção de sessão persistente supervisionada
+
+Detecção de ações sensíveis — Implementar heurística simples no browser_service ou approval_service para exigir aprovação antes de:
+- clicar botões com textos tipo:
+  enviar, submit, confirmar, pagar, excluir, deletar, remover, finalizar, concluir, contratar
+- submit de form
+- navegação para páginas de checkout/pagamento
+- upload de arquivo
+- qualquer passo marcado como high-risk por workflow
+Se a ação exigir aprovação:
+- não executar
+- criar PendingApproval
+- responder ao usuário com instrução clara para /approve <id>
+
+Ferramentas / browser tools para IA — Expandir OpenAIService + AssistantService com tools:
+- browser_start_session(url, workflow_name)
+- browser_open_url(session_id, url)
+- browser_capture_screenshot(session_id)
+- browser_extract_text(session_id)
+- browser_click(session_id, selector)
+- browser_fill(session_id, selector, value)
+- browser_select_option(session_id, selector, value)
+- browser_wait_for_selector(session_id, selector)
+- browser_download_file(session_id, selector)
+- browser_get_page_summary(session_id)
+- browser_list_sessions()
+- browser_close_session(session_id)
+
+Regras:
+- IA pode navegar, ler, capturar e preencher
+- IA não pode executar ação sensível sem approval
+- IA não pode burlar login, CAPTCHA, 2FA
+- se detectar necessidade de login, orientar login manual e pausar sessão
+- se domínio não estiver permitido, responder amigavelmente e não executar
+
+Playbooks web iniciais — Criar em workflow_service ou módulo próprio:
+1. website_research
+- abre uma URL
+- captura screenshot
+- extrai texto principal
+- devolve resumo curto
+
+2. form_prep
+- abre página
+- preenche campos de formulário
+- para antes do submit
+- cria approval para envio
+
+3. portal_check
+- abre portal permitido
+- navega até página alvo
+- extrai dados visíveis
+- gera resumo
+- se login for necessário, pausa e orienta o usuário
+
+4. file_collect
+- abre página permitida
+- baixa arquivo específico quando houver
+- registra artifact
+- devolve caminho e resumo do arquivo
+
+Comandos Telegram — Adicionar em app/routes/telegram.py:
+- /browserstart <url>
+- /browserstatus
+- /browsersessions
+- /browserclose <session_id>
+- /webresearch <url>
+- /portcheck <url>
+- /formsession <url>
+- /browserapprove <id> (pode reutilizar /approve se preferir)
+- /browserartifacts <session_id>
+
+Regras dos comandos:
+- mensagens de erro claras em pt-BR
+- validar domínio permitido
+- limitar uma sessão ativa por usuário inicialmente
+- se o usuário tentar abrir outra sessão, orientar fechar a atual ou reutilizar
+
+Login manual e handoff seguro — Implementar fluxo explícito:
+- quando página exigir login, o Jarvis responde que a sessão entrou em modo paused_for_login
+- criar comando /browserresume <session_id>
+- não tentar automatizar 2FA
+- não armazenar credenciais digitadas
+- manter logs claros do motivo da pausa
+
+Downloads e screenshots — Implementar diretórios temporários controlados:
+- salvar screenshots em BROWSER_SCREENSHOT_DIR
+- salvar downloads em BROWSER_DOWNLOAD_DIR
+- registrar em BrowserArtifact
+- limpeza automática de artefatos temporários expirados via scheduler da Fase 6
+- README deve explicar retenção temporária
+
+Resumo de página e observabilidade — Criar helpers em app/utils/browser_utils.py:
+- sanitize_url_for_logs
+- summarize_page_text
+- is_sensitive_action
+- extract_domain
+- is_domain_allowed
+- clean_old_browser_artifacts
+Adicionar logs estruturados para:
+- browser_session_started
+- browser_navigation
+- browser_click
+- browser_fill
+- browser_sensitive_action_blocked
+- browser_approval_created
+- browser_download_completed
+- browser_session_closed
+- browser_session_failed
+
+Approval Center integração — PendingApproval deve suportar payloads de browser actions:
+- session_id
+- action_type
+- selector
+- value
+- current_url
+- screenshot_path
+Ao aprovar:
+- executar exatamente a ação pendente
+- marcar como executed
+- impedir replay
+Ao rejeitar:
+- manter sessão viva quando fizer sentido
+- informar ao usuário que a ação foi cancelada
+
+Scheduler / limpeza — Integrar com scheduler da Fase 6:
+- expirar BrowserSessions antigas
+- fechar sessões órfãs
+- limpar screenshots e downloads antigos
+- registrar limpeza no ActionLog
+
+Testes mockados — Adicionar tests/test_browser.py e no mínimo 25 testes mockados cobrindo:
+- start_session
+- domínio permitido / bloqueado
+- captura de screenshot
+- extração de texto
+- click simples
+- fill simples
+- ação sensível gerando approval
+- approval executando ação pendente
+- rejection cancelando ação
+- timeout de navegação
+- pausa para login
+- close_session
+- cleanup de sessão expirada
+- comandos Telegram /browserstart, /browserstatus, /browsersessions, /browserclose, /webresearch, /formsession
+- uma sessão ativa por usuário
+- integração com tool executor
+Todos os testes sem navegador real externo; mockar Playwright.
+
+README e replit.md — Atualizar README com:
+- conceito de browser automation supervisionada
+- allowlist de domínios
+- o que o Jarvis pode e não pode fazer
+- como iniciar e encerrar sessões
+- como funcionam approvals no browser
+- como testar website_research, form_prep e portal_check
+- observação explícita de que login manual/2FA não são automatizados
+- observação de que futuras fases podem adicionar UI web e sessão persistente supervisionada
+Atualizar replit.md com a nova arquitetura (scheduler + approvals + browser sessions + artifacts).
+
+Relevant files
+app/config.py
+app/main.py
+app/models/__init__.py
+app/models/pending_approval.py
+app/services/approval_service.py
+app/services/workflow_service.py
+app/services/assistant_service.py
+app/services/openai_service.py
+app/routes/telegram.py
+app/utils/__init__.py
+tests/conftest.py
+tests/test_approvals.py
+tests/test_workflows.py
+README.md

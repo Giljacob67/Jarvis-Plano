@@ -39,7 +39,29 @@ Ferramentas disponíveis:
 - run_workflow(name, params): executa um workflow/playbook (lead_followup, meeting_prep, inbox_triage)
 - get_morning_briefing(): gera o briefing matinal
 - get_evening_review(): gera o fechamento do dia
-- get_proactive_suggestions(): retorna sugestões proativas"""
+- get_proactive_suggestions(): retorna sugestões proativas
+
+Ferramentas de browser (Phase 7 — automação supervisionada):
+- browser_start_session(url): inicia sessão de browser no domínio permitido. SEMPRE verifique se o domínio está na lista antes de chamar.
+- browser_open_url(session_id, url): navega para uma URL dentro da sessão
+- browser_capture_screenshot(session_id): captura screenshot da página atual
+- browser_extract_text(session_id): extrai texto visível da página
+- browser_click(session_id, selector): clica em elemento — ações sensíveis pedem aprovação automática
+- browser_fill(session_id, selector, value): preenche campo de formulário
+- browser_select_option(session_id, selector, value): seleciona opção em <select>
+- browser_wait_for_selector(session_id, selector, timeout_ms): aguarda elemento aparecer
+- browser_download_file(session_id, trigger_selector): faz download de arquivo via expect_download
+- browser_get_page_summary(session_id): retorna URL, título e texto resumido da página
+- browser_list_sessions(): lista sessões de browser (ativas e recentes)
+- browser_close_session(session_id): encerra sessão de browser
+
+Regras de browser OBRIGATÓRIAS:
+- NUNCA tente automatizar login, CAPTCHA, 2FA ou qualquer fluxo de autenticação
+- NUNCA navegue para um domínio fora de BROWSER_ALLOWED_DOMAINS
+- Se BROWSER_ALLOWED_DOMAINS estiver vazio, informe ao usuário que nenhum domínio está permitido
+- Ações sensíveis (pagamento, exclusão, envio de formulário crítico) SEMPRE criam PendingApproval automaticamente — NUNCA execute direto
+- Se a sessão entrar em status paused_for_login, instrua o usuário a fazer login manualmente e usar /browserresume
+- Use uma sessão por vez por usuário; feche antes de abrir outra"""
 
 
 def format_memories_context(memories: list) -> str:

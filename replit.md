@@ -17,8 +17,9 @@ Hybrid workspace: a pnpm monorepo (TypeScript) plus a standalone Python FastAPI 
 - **Voice**: OpenAI Audio API (transcribe + TTS), Telegram voice/audio download and send
 - **Proactive**: Scheduler with morning briefing, evening review, due task/event reminders
 - **Approvals**: Pending approval center for sensitive actions (email send, follow-up, event creation)
-- **Workflows**: 3 playbooks (lead_followup, meeting_prep, inbox_triage)
-- **Tests**: `pytest tests/ -v` (179 tests)
+- **Workflows**: 7 playbooks (lead_followup, meeting_prep, inbox_triage + 4 browser playbooks)
+- **Browser Automation**: Playwright Chromium, domain allowlist, approval-gated sensitive actions, login detection, screenshot, download, text extraction
+- **Tests**: run per-file with `pytest tests/<file>.py -v` (227+ tests across 11 files; running all at once may cause asyncio teardown warnings)
 
 ### Python project structure
 
@@ -41,7 +42,10 @@ app/
 │   ├── pending_approval.py   # PendingApproval (approval center with expiry + idempotency)
 │   ├── workflow_run.py       # WorkflowRun (playbook execution log)
 │   ├── suggestion_log.py     # SuggestionLog (proactive suggestion tracking)
-│   └── routine_execution_log.py  # RoutineExecutionLog (dedup for scheduler runs)
+│   ├── routine_execution_log.py  # RoutineExecutionLog (dedup for scheduler runs)
+│   ├── browser_session.py    # BrowserSession (Playwright session per user, TTL, status)
+│   ├── browser_step_log.py   # BrowserStepLog (per-action log with screenshot path)
+│   └── browser_artifact.py   # BrowserArtifact (screenshots + downloads metadata)
 ├── schemas/             # Pydantic schemas (health, telegram, day, common)
 ├── routes/
 │   ├── health.py        # GET /health
@@ -58,15 +62,17 @@ app/
 │   ├── google_calendar.py   # Google Calendar API (list events, create events)
 │   ├── google_tasks.py      # Google Tasks API (list tasks, create tasks, complete tasks)
 │   ├── google_gmail_service.py  # Gmail API (list, get, thread, drafts, send, reply)
-│   ├── approval_service.py     # Approval center (create, list, approve, reject, execute)
+│   ├── approval_service.py     # Approval center (create, list, approve, reject, execute; browser types added)
 │   ├── proactive_service.py    # Proactive features (briefing, review, suggestions, quiet hours)
-│   ├── workflow_service.py     # Workflow/playbook engine (3 playbooks)
-│   ├── scheduler_service.py    # Asyncio scheduler (routines, reminders)
+│   ├── workflow_service.py     # Workflow/playbook engine (7 playbooks: 3 existing + 4 browser)
+│   ├── scheduler_service.py    # Asyncio scheduler (routines, reminders, hourly browser cleanup)
+│   ├── browser_service.py      # Playwright browser automation (shared _browser + per-session context)
 │   └── gmail.py             # Deprecated stub
 ├── utils/
 │   ├── date_utils.py    # Timezone helpers
-│   └── gmail_utils.py   # Gmail helpers
-tests/                   # pytest tests (179 tests)
+│   ├── gmail_utils.py   # Gmail helpers
+│   └── browser_utils.py # Domain allowlist, sensitive action heuristics, login page detection, text summary
+tests/                   # pytest tests (227+ across 11 files)
 scripts/
 ├── set_telegram_webhook.py
 └── get_telegram_webhook_info.py
@@ -107,6 +113,15 @@ requirements.txt
 | /routinestatus | Routine status |
 | /quieton / /quietoff / /quietstatus | Quiet hours control |
 | /voiceon / /voiceoff / /voicestatus | Voice response control |
+| /browserstart \<url\> | Start browser session at URL |
+| /browserstatus | Status of current active session |
+| /browsersessions | List all recent browser sessions |
+| /browserclose [session_id] | Close a browser session |
+| /browserresume \<session_id\> | Resume after manual login |
+| /browserartifacts \<session_id\> | List screenshots/downloads for a session |
+| /webresearch \<url\> | Research a website (website_research playbook) |
+| /portcheck \<url\> | Check a portal for updates (portal_check playbook) |
+| /formsession \<url\> [\| field=value ...] | Automated form session (form_prep playbook) |
 
 ### Key env vars (Python)
 
@@ -126,6 +141,16 @@ requirements.txt
 - `MAX_PENDING_APPROVALS` — max pending approvals per user (default: 20)
 - `REMINDER_CHECK_INTERVAL_MINUTES` — scheduler check interval (default: 10)
 - `APP_ENV`, `TIMEZONE`, `APP_BASE_URL`
+- `BROWSER_AUTOMATION_ENABLED` — master switch (default: false)
+- `BROWSER_ALLOWED_DOMAINS` — comma-separated allowlist (e.g. `example.com,docs.python.org`); **empty = all navigation blocked**
+- `BROWSER_HEADLESS` — run Chromium headless (default: true)
+- `BROWSER_DEFAULT_TIMEOUT_MS` — default Playwright timeout (default: 10000)
+- `BROWSER_NAVIGATION_TIMEOUT_MS` — page.goto timeout (default: 30000)
+- `BROWSER_SESSION_TTL_MINUTES` — auto-expire idle sessions (default: 60)
+- `BROWSER_SCREENSHOT_DIR` — where screenshots are stored (default: `/tmp/jarvis_screenshots`)
+- `BROWSER_DOWNLOAD_DIR` — where downloads are saved (default: `/tmp/jarvis_downloads`)
+- `BROWSER_ALLOW_FILE_DOWNLOADS` — allow page.expect_download (default: true)
+- `BROWSER_REQUIRE_APPROVAL_FOR_SUBMIT` — route form submits through approval center (default: true)
 
 ### Key design decisions
 
@@ -144,6 +169,15 @@ requirements.txt
 - **Scheduler**: asyncio task started in lifespan, checks routines every `reminder_check_interval_minutes`
 - **Quiet hours**: global setting + per-user MemoryItem(category="preference", content="quiet_hours_disabled")
 - **Cooldown**: checked via ActionLog("proactive_message_sent") recency
+- **Browser architecture**: single shared `_browser` + `_playwright` globals per process; `start_browser()`/`stop_browser()` in lifespan; `_live_contexts` maps session_id → (context, page) in memory
+- **Browser domain enforcement**: `is_domain_allowed(url)` blocks every navigation — empty `BROWSER_ALLOWED_DOMAINS` = all blocked; subdomain matching supported
+- **Browser one-session-per-user**: attempting a second session while one is active returns an error
+- **Login detection**: URL/title patterns (login, signin, sign-in, auth, password, 2fa, verify) OR password input → session pauses to `paused_for_login`; use /browserresume to continue
+- **Sensitive action routing**: `is_sensitive_action()` checks action type + selector text + URL pattern; sensitive actions create a PendingApproval and return `pending_approval` status; approval dispatch calls `approve_and_execute_browser_action`
+- **Downloads**: `page.expect_download()` async context manager + `download.save_as(path)`; saved to `BROWSER_DOWNLOAD_DIR`, recorded in BrowserArtifact
+- **Browser cleanup**: scheduler runs `expire_old_sessions` + `clean_old_browser_artifacts` hourly via `browser_cleanup` run_key
+- **12 browser OpenAI tools**: browser_start_session, browser_open_url, browser_click, browser_fill, browser_select_option, browser_press_key, browser_wait_for_selector, browser_capture_screenshot, browser_extract_visible_text, browser_download_file, browser_close_session, browser_list_sessions
+- **4 browser playbooks**: website_research, form_prep, portal_check, file_collect
 
 ## Node.js / TypeScript Stack
 

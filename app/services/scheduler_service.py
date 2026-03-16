@@ -104,6 +104,11 @@ async def _check_routines() -> None:
         if _try_claim_run("reminder_check", reminder_key):
             await _check_reminders(user_id)
 
+    hour_str = now.strftime("%Y-%m-%d_%H")
+    browser_cleanup_key = f"browser_cleanup_{hour_str}"
+    if _try_claim_run("browser_cleanup", browser_cleanup_key):
+        await _cleanup_browser_sessions()
+
 
 async def _send_briefing(user_id: str) -> None:
     db = SessionLocal()
@@ -153,6 +158,20 @@ async def _check_reminders(user_id: str) -> None:
 
     except Exception:
         logger.exception("Reminder check failed")
+    finally:
+        db.close()
+
+
+async def _cleanup_browser_sessions() -> None:
+    db = SessionLocal()
+    try:
+        from app.services import browser_service
+        from app.utils.browser_utils import clean_old_browser_artifacts
+        expired = await browser_service.expire_old_sessions(db)
+        cleaned = clean_old_browser_artifacts(db, older_than_days=7)
+        logger.info("Browser cleanup: expired=%d sessions, cleaned=%d artifacts", expired, cleaned)
+    except Exception:
+        logger.exception("Browser session cleanup failed")
     finally:
         db.close()
 

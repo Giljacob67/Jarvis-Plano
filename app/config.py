@@ -61,6 +61,18 @@ class Settings(BaseSettings):
             scopes = f"{scopes} {self.google_gmail_scopes}"
         return scopes
 
+    browser_automation_enabled: bool = False
+    browser_headless: bool = True
+    browser_default_timeout_ms: int = 15000
+    browser_navigation_timeout_ms: int = 30000
+    browser_allowed_domains: str = ""
+    browser_session_ttl_minutes: int = 20
+    browser_download_dir: str = "/tmp/jarvis_downloads"
+    browser_screenshot_dir: str = "/tmp/jarvis_screens"
+    browser_max_steps_per_run: int = 25
+    browser_require_approval_for_submit: bool = True
+    browser_allow_file_downloads: bool = True
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

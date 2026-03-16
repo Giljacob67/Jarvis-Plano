@@ -11,6 +11,9 @@ from app.models.pending_approval import PendingApproval
 from app.models.workflow_run import WorkflowRun
 from app.models.suggestion_log import SuggestionLog
 from app.models.routine_execution_log import RoutineExecutionLog
+from app.models.browser_session import BrowserSession
+from app.models.browser_step_log import BrowserStepLog
+from app.models.browser_artifact import BrowserArtifact
 
 __all__ = [
     "User",
@@ -26,4 +29,7 @@ __all__ = [
     "WorkflowRun",
     "SuggestionLog",
     "RoutineExecutionLog",
+    "BrowserSession",
+    "BrowserStepLog",
+    "BrowserArtifact",
 ]

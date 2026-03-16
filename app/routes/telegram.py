@@ -31,6 +31,7 @@ from app.services import audio_service
 from app.services import approval_service
 from app.services import proactive_service
 from app.services import workflow_service
+from app.services import browser_service
 from app.utils.date_utils import parse_datetime_local
 from app.utils.gmail_utils import format_messages_list_telegram
 
@@ -72,6 +73,16 @@ HELP_TEXT = (
     "/voiceon — ativar respostas por áudio\n"
     "/voiceoff — desativar respostas por áudio\n"
     "/voicestatus — status das respostas por áudio\n"
+    "🌐 Browser (automação supervisionada):\n"
+    "/browserstart <url> — iniciar sessão de browser\n"
+    "/browserstatus — status da sessão ativa\n"
+    "/browsersessions — listar sessões recentes\n"
+    "/browserclose <session_id> — encerrar sessão\n"
+    "/browserresume <session_id> — retomar após login\n"
+    "/webresearch <url> — pesquisar página web\n"
+    "/portcheck <url> — verificar portal web\n"
+    "/formsession <url> — iniciar sessão de formulário\n"
+    "/browserartifacts <session_id> — ver artefatos da sessão\n"
     "/help — ver esta mensagem\n\n"
     "Ou envie texto livre ou nota de voz para conversar comigo!"
 )
@@ -510,6 +521,25 @@ async def _route_command(db: Session, user_id: str, chat_id: int, text: str, bod
     if text.startswith("/drafts"):
         return await _cmd_drafts(db, user_id)
 
+    if text.startswith("/browserstart"):
+        return await _cmd_browserstart(db, user_id, text)
+    if text.startswith("/browserstatus"):
+        return await _cmd_browserstatus(db, user_id)
+    if text.startswith("/browsersessions"):
+        return await _cmd_browsersessions(db, user_id)
+    if text.startswith("/browserclose"):
+        return await _cmd_browserclose(db, user_id, text)
+    if text.startswith("/browserresume"):
+        return await _cmd_browserresume(db, user_id, text)
+    if text.startswith("/webresearch"):
+        return await _cmd_webresearch(db, user_id, text)
+    if text.startswith("/portcheck"):
+        return await _cmd_portcheck(db, user_id, text)
+    if text.startswith("/formsession"):
+        return await _cmd_formsession(db, user_id, text)
+    if text.startswith("/browserartifacts"):
+        return await _cmd_browserartifacts(db, user_id, text)
+
     return await handle_free_text(db, user_id, text, raw_update=body)
 
 
@@ -832,4 +862,164 @@ async def _cmd_drafts(db: Session, user_id: str) -> str:
         subj = d.get("subject", "(sem assunto)")
         did = d.get("draft_id", "")
         lines.append(f"{i}. Para: {to_str} — {subj}\n   ID: {did}")
+    return "\n".join(lines)
+
+
+def _browser_not_ready_msg() -> str | None:
+    from app.config import settings as s
+    if not s.browser_automation_enabled:
+        return "❌ Automação de browser está desativada (BROWSER_AUTOMATION_ENABLED=false)."
+    if not s.browser_allowed_domains.strip():
+        return (
+            "❌ Nenhum domínio está na lista de permissões.\n"
+            "Configure BROWSER_ALLOWED_DOMAINS no .env antes de usar automação de browser.\n"
+            "Exemplo: BROWSER_ALLOWED_DOMAINS=example.com,docs.python.org"
+        )
+    return None
+
+
+async def _cmd_browserstart(db: Session, user_id: str, text: str) -> str:
+    not_ready = _browser_not_ready_msg()
+    if not_ready:
+        return not_ready
+    url = text[len("/browserstart"):].strip()
+    if not url:
+        return (
+            "Use: /browserstart <url>\n"
+            "Exemplo: /browserstart https://example.com"
+        )
+    result = await browser_service.start_session(db, user_id, url)
+    if "error" in result:
+        return f"❌ {result['error']}"
+    sid = result["session_id"]
+    return (
+        f"🌐 Sessão de browser iniciada!\n"
+        f"ID: `{sid}`\n"
+        f"URL: {url}\n\n"
+        f"Comandos úteis:\n"
+        f"  /browserstatus — ver status\n"
+        f"  /browserclose {sid} — encerrar sessão\n"
+        f"  /browserresume {sid} — retomar após login (se necessário)"
+    )
+
+
+async def _cmd_browserstatus(db: Session, user_id: str) -> str:
+    sessions = browser_service.list_sessions(db, user_id)
+    active = [s for s in sessions if s.status in ("active", "paused_for_login")]
+    if not active:
+        return "ℹ️ Nenhuma sessão de browser ativa no momento.\nUse /browserstart <url> para iniciar uma."
+    s = active[0]
+    status_icon = {"active": "✅", "paused_for_login": "⚠️"}.get(s.status, "❓")
+    lines = [
+        f"{status_icon} *Sessão ativa:*",
+        f"  ID: `{s.session_id}`",
+        f"  Status: {s.status}",
+        f"  URL: {s.current_url or s.start_url or '?'}",
+        f"  Título: {s.page_title or '?'}",
+        f"  Passos: {s.steps_taken}",
+    ]
+    if s.status == "paused_for_login":
+        lines.append(f"\n⚠️ Sessão pausada para login. Faça o login manualmente e use /browserresume {s.session_id}")
+    return "\n".join(lines)
+
+
+async def _cmd_browsersessions(db: Session, user_id: str) -> str:
+    sessions = browser_service.list_sessions(db, user_id)
+    if not sessions:
+        return "ℹ️ Nenhuma sessão de browser encontrada."
+    lines = ["🌐 *Sessões de browser (últimas 10):*"]
+    for s in sessions:
+        icon = {"active": "✅", "paused_for_login": "⚠️", "closed": "🔒", "expired": "⏰"}.get(s.status, "❓")
+        lines.append(f"{icon} `{s.session_id}` — {s.status} — {s.current_url or s.start_url or '?'}")
+    return "\n".join(lines)
+
+
+async def _cmd_browserclose(db: Session, user_id: str, text: str) -> str:
+    session_id = text[len("/browserclose"):].strip()
+    if not session_id:
+        active = [s for s in browser_service.list_sessions(db, user_id) if s.status in ("active", "paused_for_login")]
+        if active:
+            session_id = active[0].session_id
+        else:
+            return "ℹ️ Nenhuma sessão ativa. Use /browsersessions para ver todas."
+    result = await browser_service.close_session(db, user_id, session_id)
+    if "error" in result:
+        return f"❌ {result['error']}"
+    return f"🔒 Sessão `{session_id}` encerrada."
+
+
+async def _cmd_browserresume(db: Session, user_id: str, text: str) -> str:
+    session_id = text[len("/browserresume"):].strip()
+    if not session_id:
+        return "Use: /browserresume <session_id>"
+    result = await browser_service.resume_session(db, user_id, session_id)
+    if "error" in result:
+        return f"❌ {result['error']}"
+    if result.get("status") == "still_on_login":
+        return result["message"]
+    url = result.get("url", "?")
+    title = result.get("title", "?")
+    return (
+        f"✅ Sessão retomada!\n"
+        f"URL: {url}\n"
+        f"Título: {title}\n"
+        f"Agora você pode continuar a automação."
+    )
+
+
+async def _cmd_webresearch(db: Session, user_id: str, text: str) -> str:
+    not_ready = _browser_not_ready_msg()
+    if not_ready:
+        return not_ready
+    url = text[len("/webresearch"):].strip()
+    if not url:
+        return "Use: /webresearch <url>\nExemplo: /webresearch https://example.com"
+    return await workflow_service.run_workflow(db, user_id, "website_research", [url])
+
+
+async def _cmd_portcheck(db: Session, user_id: str, text: str) -> str:
+    not_ready = _browser_not_ready_msg()
+    if not_ready:
+        return not_ready
+    url = text[len("/portcheck"):].strip()
+    if not url:
+        return "Use: /portcheck <url>\nExemplo: /portcheck https://meuportal.com.br"
+    return await workflow_service.run_workflow(db, user_id, "portal_check", [url])
+
+
+async def _cmd_formsession(db: Session, user_id: str, text: str) -> str:
+    not_ready = _browser_not_ready_msg()
+    if not_ready:
+        return not_ready
+    rest = text[len("/formsession"):].strip()
+    if not rest:
+        return (
+            "Use: /formsession <url> [| campo=valor ...]\n"
+            "Exemplo: /formsession https://example.com/form | name=João | email=joao@x.com"
+        )
+    parts = [p.strip() for p in rest.split("|")]
+    return await workflow_service.run_workflow(db, user_id, "form_prep", parts)
+
+
+async def _cmd_browserartifacts(db: Session, user_id: str, text: str) -> str:
+    session_id = text[len("/browserartifacts"):].strip()
+    if not session_id:
+        return "Use: /browserartifacts <session_id>"
+    from app.models.browser_artifact import BrowserArtifact
+    artifacts = (
+        db.query(BrowserArtifact)
+        .filter(
+            BrowserArtifact.session_id == session_id,
+            BrowserArtifact.user_id == user_id,
+        )
+        .order_by(BrowserArtifact.created_at.desc())
+        .all()
+    )
+    if not artifacts:
+        return f"ℹ️ Nenhum artefato encontrado para a sessão `{session_id}`."
+    lines = [f"🗂 *Artefatos da sessão `{session_id}`:*"]
+    for a in artifacts:
+        icon = {"screenshot": "📸", "download": "📥"}.get(a.artifact_type, "📄")
+        size_str = f" ({a.file_size_bytes} bytes)" if a.file_size_bytes else ""
+        lines.append(f"{icon} [{a.artifact_type}] `{a.file_path or '?'}`{size_str}")
     return "\n".join(lines)

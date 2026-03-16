@@ -11,6 +11,7 @@ from app.db import init_db
 from app.routes import api_router
 from app.services import telegram_service
 from app.services.scheduler_service import start_scheduler, stop_scheduler
+from app.services import browser_service
 
 logging.basicConfig(
     level=logging.DEBUG if settings.app_env == "development" else logging.INFO,
@@ -31,7 +32,15 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("TelegramService httpx client started")
     await start_scheduler()
     logger.info("Scheduler started")
+    if settings.browser_automation_enabled:
+        await browser_service.start_browser()
+        logger.info("Browser service started (Playwright)")
+    else:
+        logger.info("Browser automation disabled — skipping Playwright launch")
     yield
+    if settings.browser_automation_enabled:
+        await browser_service.stop_browser()
+        logger.info("Browser service stopped")
     await stop_scheduler()
     logger.info("Scheduler stopped")
     await telegram_service.stop()
