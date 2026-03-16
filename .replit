@@ -1,58 +1,59 @@
 modules = ["nodejs-24", "python-3.12"]
 
-  [[artifacts]]
-  id = "artifacts/api-server"
+    [[artifacts]]
+    id = "artifacts/api-server"
 
-  [[artifacts]]
-  id = "artifacts/mockup-sandbox"
+    [[artifacts]]
+    id = "artifacts/mockup-sandbox"
 
-  [deployment]
-  deploymentTarget = "vm"
-  build = ["bash", "-c", "pip install -r requirements.txt"]
-  run = ["bash", "start.sh"]
+    [deployment]
+    deploymentTarget = "autoscale"
+    build = ["bash", "-c", "pip install -r requirements.txt"]
+    run = ["bash", "start.sh"]
 
-  [workflows]
-  runButton = "Project"
+    [workflows]
+    runButton = "Project"
 
-  [[workflows.workflow]]
-  name = "Project"
-  mode = "parallel"
-  author = "agent"
+    [[workflows.workflow]]
+    name = "Project"
+    mode = "parallel"
+    author = "agent"
 
-  [[workflows.workflow.tasks]]
-  task = "workflow.run"
-  args = "Jarvis Pessoal"
+    [[workflows.workflow.tasks]]
+    task = "workflow.run"
+    args = "Jarvis Pessoal"
 
-  [[workflows.workflow]]
-  name = "Jarvis Pessoal"
-  author = "agent"
+    [[workflows.workflow]]
+    name = "Jarvis Pessoal"
+    author = "agent"
 
-  [[workflows.workflow.tasks]]
-  task = "shell.exec"
-  args = "uvicorn app.main:app --host 0.0.0.0 --port 8000"
-  waitForPort = 8000
+    [[workflows.workflow.tasks]]
+    task = "shell.exec"
+    args = "uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    waitForPort = 8000
 
-  [workflows.workflow.metadata]
-  outputType = "webview"
+    [workflows.workflow.metadata]
+    outputType = "webview"
 
-  [agent]
-  stack = "PNPM_WORKSPACE"
-expertMode = true
+    [agent]
+    stack = "PNPM_WORKSPACE"
+  expertMode = true
 
-  [postMerge]
-  path = "scripts/post-merge.sh"
-  timeoutMs = 20000
+    [postMerge]
+    path = "scripts/post-merge.sh"
+    timeoutMs = 20000
 
-  [nix]
-  channel = "stable-25_05"
+    [nix]
+    channel = "stable-25_05"
 
-  [userenv]
+    [userenv]
 
-  [userenv.production]
-  APP_ENV = "production"
-  TIMEZONE = "America/Sao_Paulo"
-  JARVIS_DATABASE_URL = "sqlite:///./jarvis.db"
-  BROWSER_AUTOMATION_ENABLED = "false"
-APP_BASE_URL = "https://anexo-plano.replit.app"
+    [userenv.production]
+    APP_ENV = "production"
+    TIMEZONE = "America/Sao_Paulo"
+    JARVIS_DATABASE_URL = "sqlite:///./jarvis.db"
+    BROWSER_AUTOMATION_ENABLED = "false"
+  APP_BASE_URL = "https://anexo-plano.replit.app"
 
-[userenv.shared]
+  [userenv.shared]
+  
