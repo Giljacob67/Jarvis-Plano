@@ -1,5 +1,5 @@
 import * as http from "http";
-import express, { type Express, type NextFunction, type Request, type Response } from "express";
+import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
 import router from "./routes";
 
@@ -34,19 +34,32 @@ const app: Express = express();
 
 app.use(cors());
 
-// All /api/* requests except /api/healthz are forwarded to Jarvis Python (port 8000).
-// The /api prefix is stripped before forwarding:
-//   /api/webhooks/telegram  →  /webhooks/telegram
-//   /api/health             →  /health
-//   /api/auth/google/start  →  /auth/google/start
-// Must come BEFORE body parsers so raw body is available for piping.
-app.use("/api", (req: Request, res: Response, next: NextFunction) => {
-  if (req.path === "/healthz") {
-    return next();
-  }
-  proxyToJarvis(req, res, req.url);
+// ── Jarvis proxy routes ───────────────────────────────────────────────────────
+// MUST come before body parsers so the raw body stream is available for piping.
+// The /api prefix is stripped before forwarding to Jarvis Python (port 8000):
+//   POST /api/webhooks/telegram  →  POST /webhooks/telegram   (Telegram bot)
+//   GET  /api/health             →  GET  /health
+//   ANY  /api/auth/...           →  ANY  /auth/...             (Google OAuth)
+//
+// /api/healthz is intentionally NOT proxied — it is handled by the Express
+// router below so the deployment health check always succeeds even when
+// Jarvis Python is still starting up.
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.use("/api/webhooks", (req: Request, res: Response) => {
+  // req.url is the path after the mount point, e.g. "/telegram"
+  proxyToJarvis(req, res, `/webhooks${req.url}`);
 });
 
+app.use("/api/auth", (req: Request, res: Response) => {
+  proxyToJarvis(req, res, `/auth${req.url}`);
+});
+
+app.get("/api/health", (_req: Request, res: Response) => {
+  proxyToJarvis(_req, res, "/health");
+});
+
+// ── Node.js Express API (body parsers + router) ───────────────────────────────
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
