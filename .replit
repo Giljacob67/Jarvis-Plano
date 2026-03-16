@@ -53,6 +53,6 @@ expertMode = true
   TIMEZONE = "America/Sao_Paulo"
   JARVIS_DATABASE_URL = "sqlite:///./jarvis.db"
   BROWSER_AUTOMATION_ENABLED = "false"
-APP_BASE_URL = "https://anexo-plano.replit.app/api"
+APP_BASE_URL = "https://anexo-plano.replit.app"
 
 [userenv.shared]

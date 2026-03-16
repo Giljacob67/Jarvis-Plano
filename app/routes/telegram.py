@@ -322,6 +322,42 @@ def _set_routine(db: Session, user_id: str, routine_type: str, enabled: bool) ->
     return f"✅ Rotina {label} {status}."
 
 
+def _check_admin_key(key: str) -> JSONResponse | None:
+    if not settings.telegram_webhook_secret:
+        return JSONResponse(status_code=503, content={"ok": False, "message": "TELEGRAM_WEBHOOK_SECRET not configured"})
+    if key != settings.telegram_webhook_secret:
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Forbidden"})
+    if not settings.telegram_bot_token:
+        return JSONResponse(status_code=503, content={"ok": False, "message": "TELEGRAM_BOT_TOKEN not configured"})
+    return None
+
+
+@router.post("/register")
+async def register_webhook(
+    x_admin_key: str = Header(default="", alias="X-Admin-Key"),
+):
+    err = _check_admin_key(x_admin_key)
+    if err:
+        return err
+    base = settings.effective_base_url
+    if not base:
+        return JSONResponse(status_code=503, content={"ok": False, "message": "APP_BASE_URL not configured"})
+    webhook_url = f"{base}/webhooks/telegram"
+    result = await telegram_service.set_webhook(webhook_url, secret_token=settings.telegram_webhook_secret)
+    return result
+
+
+@router.get("/info")
+async def webhook_info(
+    x_admin_key: str = Header(default="", alias="X-Admin-Key"),
+):
+    err = _check_admin_key(x_admin_key)
+    if err:
+        return err
+    result = await telegram_service.get_webhook_info()
+    return result
+
+
 @router.post("/telegram", response_model=TelegramWebhookResponse)
 async def telegram_webhook(
     request: Request,
