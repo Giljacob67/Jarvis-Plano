@@ -8,7 +8,8 @@ id = "artifacts/mockup-sandbox"
 
 [deployment]
 router = "application"
-deploymentTarget = "autoscale"
+deploymentTarget = "vm"
+run = ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]
@@ -48,3 +49,11 @@ timeoutMs = 20000
 
 [nix]
 channel = "stable-25_05"
+
+[userenv]
+
+[userenv.production]
+APP_ENV = "production"
+TIMEZONE = "America/Sao_Paulo"
+JARVIS_DATABASE_URL = "sqlite:///./jarvis.db"
+BROWSER_AUTOMATION_ENABLED = "false"
